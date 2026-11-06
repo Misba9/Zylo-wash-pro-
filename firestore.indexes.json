@@ -1,0 +1,14 @@
+{
+  "indexes": [
+    { "collectionGroup": "bookings", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "customerUid", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }] },
+    { "collectionGroup": "bookings", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "assignedWorkerUid", "order": "ASCENDING" }, { "fieldPath": "scheduledAt", "order": "ASCENDING" }] },
+    { "collectionGroup": "bookings", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "scheduledAt", "order": "ASCENDING" }] },
+    { "collectionGroup": "bookings", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "serviceAreaId", "order": "ASCENDING" }, { "fieldPath": "status", "order": "ASCENDING" }, { "fieldPath": "scheduledAt", "order": "ASCENDING" }] },
+    { "collectionGroup": "subscriptions", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "customerUid", "order": "ASCENDING" }, { "fieldPath": "status", "order": "ASCENDING" }] },
+    { "collectionGroup": "subscriptionOccurrences", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "subscriptionId", "order": "ASCENDING" }, { "fieldPath": "scheduledAt", "order": "ASCENDING" }] },
+    { "collectionGroup": "payments", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "customerUid", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }] },
+    { "collectionGroup": "notifications", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "recipientUid", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }] },
+    { "collectionGroup": "reviews", "queryScope": "COLLECTION", "fields": [{ "fieldPath": "workerUid", "order": "ASCENDING" }, { "fieldPath": "createdAt", "order": "DESCENDING" }] }
+  ],
+  "fieldOverrides": []
+}

@@ -1,0 +1,37 @@
+{
+  "projects": {
+    "default": "wash-pro-7f3b1",
+    "primary": "wash-pro-7f3b1",
+    "staging": "washpro-hyd",
+    "prod": "washpro-prod"
+  },
+  "targets": {
+    "washpro-hyd": {
+      "hosting": {
+        "admin": [
+          "washpro-admin"
+        ],
+        "worker": [
+          "washpro-worker"
+        ],
+        "app": [
+          "washpro-customer"
+        ]
+      }
+    },
+    "wash-pro-7f3b1": {
+      "hosting": {
+        "admin": [
+          "wash-pro-admin"
+        ],
+        "worker": [
+          "wash-pro-worker"
+        ],
+        "app": [
+          "wash-pro-customer"
+        ]
+      }
+    }
+  },
+  "etags": {}
+}

@@ -1,0 +1,2 @@
+# Data Model
+Collections per PRD §8: users, workers, vehicles, addresses, services, serviceAreas, pricingRules, bookings, subscriptions, subscriptionOccurrences, payments, refunds, workerShifts, workerAssignments, workerLocations, jobEvidence, reviews, notifications, supportTickets, payouts, auditLogs, webhookEvents, idempotencyKeys, appConfig. Money = integer paise. Timestamps = server Timestamp. Bookings store immutable price/address/service snapshots. Full TypeScript types: `packages/shared-types/src/index.ts`.

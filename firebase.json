@@ -1,0 +1,27 @@
+{
+  "auth": {
+    "providers": {
+      "emailPassword": true,
+      "googleSignIn": {
+        "oAuthBrandDisplayName": "WashPro",
+        "supportEmail": "misbahuddinahmed157@gmail.com",
+        "authorizedRedirectUris": [
+          "https://wash-pro-7f3b1.firebaseapp.com/__/auth/handler",
+          "http://localhost"
+        ]
+      }
+    }
+  },
+  "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" },
+  "storage": { "rules": "storage.rules" },
+  "functions": [{ "source": "functions", "codebase": "default", "runtime": "nodejs22", "predeploy": ["npm --prefix \"$RESOURCE_DIR\" run build"] }],
+  "hosting": [
+    { "target": "admin", "public": "apps/admin-dashboard/dist", "ignore": ["firebase.json", "**/.*", "**/node_modules/**"], "rewrites": [{ "source": "**", "destination": "/index.html" }] },
+    { "target": "worker", "public": "apps/worker-pwa/dist", "ignore": ["firebase.json", "**/.*", "**/node_modules/**"], "rewrites": [{ "source": "**", "destination": "/index.html" }] },
+    { "target": "app", "public": "apps/customer-mobile/build/web", "ignore": ["firebase.json", "**/.*", "**/node_modules/**"], "rewrites": [{ "source": "**", "destination": "/index.html" }] }
+  ],
+  "emulators": {
+    "auth": { "port": 9099 }, "functions": { "port": 5001 }, "firestore": { "port": 8080 }, "storage": { "port": 9199 }, "hosting": { "port": 5000 },
+    "ui": { "enabled": true }
+  }
+}

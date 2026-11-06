@@ -1,0 +1,2 @@
+# Deployment
+Separate staging/prod Firebase projects. CI: lint, unit tests, builds, rules tests. Deploy: `firebase deploy --only firestore:rules,firestore:indexes,storage,functions,hosting`. Secrets in Secret Manager (Razorpay, webhook secret). Maps keys restricted by origin/package. Budget alerts before pilot. Pilot: limited Hyderabad areas (Hitech City, Gachibowli, Kondapur, Banjara/Jubilee Hills, Begumpet), small verified worker pool — see PRD §19.

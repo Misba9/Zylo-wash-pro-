@@ -1,0 +1,2 @@
+# Architecture
+Flutter customer app + React worker PWA + React admin → Firebase (Auth, Firestore, Storage, Functions Gen2, FCM, Scheduler). Razorpay + Google Maps are server-side only. Clients never set prices/payment status/roles — all privileged transitions go through callable Cloud Functions that authenticate, authorize, validate (Zod), transact and audit-log. Demo mode in web apps mirrors function logic via `packages/shared-types` and localStorage so the product runs without credentials.

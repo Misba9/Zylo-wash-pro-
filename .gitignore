@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+.DS_Store
+.firebase/
+serviceAccount*.json
+functions/lib/
+apps/customer-mobile/build/
+apps/customer-mobile/.dart_tool/
+
+# Android signing (NEVER commit)
+*.jks
+key.properties

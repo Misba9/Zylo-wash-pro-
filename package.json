@@ -1,0 +1,15 @@
+{
+  "name": "washpro",
+  "version": "1.0.0",
+  "private": true,
+  "description": "WashPro — Doorstep car washing & detailing platform (Hyderabad)",
+  "workspaces": ["apps/worker-pwa", "apps/admin-dashboard", "packages/*"],
+  "scripts": {
+    "dev:worker": "npm run dev -w @washpro/worker-pwa",
+    "dev:admin": "npm run dev -w @washpro/admin-dashboard",
+    "build": "npm run build -w @washpro/shared-types && npm run build -w @washpro/worker-pwa && npm run build -w @washpro/admin-dashboard",
+    "test": "npm run test -w @washpro/shared-types",
+    "build:functions": "npm --prefix functions run build"
+  },
+  "engines": { "node": ">=18" }
+}

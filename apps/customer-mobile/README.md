@@ -1,0 +1,2 @@
+# WashPro Customer App (Flutter)
+Run: `flutter pub get && flutter run` — Demo mode: any 10-digit mobile, OTP `123456`. Data mirrors Firestore collections; production wiring: `flutterfire configure`, uncomment Firebase deps in pubspec, replace `DemoStore` calls with Firestore/Functions (createBooking, createPaymentOrder→Razorpay, verifyPayment). Screens: OTP auth, home, vehicles, addresses, services, instant/scheduled booking, subscriptions, live tracking (active trip only), verification + rating, history, support, profile.

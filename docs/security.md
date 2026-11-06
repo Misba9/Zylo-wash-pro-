@@ -1,0 +1,2 @@
+# Security
+Deny-by-default Firestore/Storage rules (see root rule files). Roles via custom claims: customer/worker/admin/finance/super_admin — never self-assignable. Functions re-check auth server-side (Admin SDK bypasses rules). Razorpay webhooks verified by HMAC + idempotent via webhookEvents/idempotencyKeys. Evidence photos private in Storage, served via short-lived signed URLs. Location only during active trip (workerLocations/{uid}), deleted on arrival. Test rules with Emulator Suite before deploy.

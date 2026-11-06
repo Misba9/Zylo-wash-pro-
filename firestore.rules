@@ -1,0 +1,122 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isSelf(uid) { return signedIn() && request.auth.uid == uid; }
+    function hasRole(r) { return signedIn() && request.auth.token.role == r; }
+    // Role can come from custom claims (Functions era) OR an admins/{uid} doc (console bootstrap).
+    function adminDocRole() {
+      return exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.get('role', '')
+        : '';
+    }
+    function isAdmin() { return hasRole("admin") || hasRole("super_admin") || adminDocRole() in ["admin", "super_admin"]; }
+    function isFinance() { return isAdmin() || hasRole("finance") || adminDocRole() == "finance"; }
+    function isWorker() { return hasRole("worker") || exists(/databases/$(database)/documents/workers/$(request.auth.uid)); }
+    // Worker docs may be keyed by a stable worker id (w1..) matched by phone in the app;
+    // assignment checks compare the booking's assignedWorkerUid with worker phone-verified doc id stored on the user doc when available.
+    function workerDocId() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('workerDocId', ''); }
+
+    match /admins/{uid} {
+      allow read: if isSelf(uid) || isAdmin();
+      // One-time bootstrap: the pilot admin can claim their own admins doc
+      // (create only). Remove this email clause once the admin is set up.
+      allow create: if hasRole("super_admin")
+        || (isSelf(uid) && request.auth.token.email == "admin@washproo.in"
+            && request.resource.data.role == "super_admin");
+      allow update, delete: if hasRole("super_admin");
+    }
+    match /users/{uid} {
+      allow read: if isSelf(uid) || isAdmin();
+      allow create: if isSelf(uid) && !request.resource.data.keys().hasAny(["role", "admin", "isSuperAdmin"]);
+      allow update: if isSelf(uid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["name", "email", "profileImagePath", "updatedAt", "fcmToken", "phone", "workerDocId"]);
+      allow delete: if false;
+    }
+    match /workers/{uid} {
+      allow read: if signedIn();
+      // Admins create workers directly; workers may self-register ONE profile
+      // keyed by their own Auth uid + email. Auto-approve policy: self-registered
+      // workers start "approved" (admins can suspend them afterwards).
+      allow create: if isAdmin()
+        || (isSelf(uid) && request.resource.data.status in ["pending", "approved"]
+            && request.resource.data.email == request.auth.token.email
+);
+      allow delete: if isAdmin();
+      allow update: if isAdmin() || (signedIn() && resource.data.phone == request.auth.token.phone_number)
+        || (isSelf(uid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["name", "photoPath", "isAvailable", "fcmToken", "updatedAt"]))
+        // Auto-approve migration: a worker may flip their OWN pending profile to approved.
+        || (isSelf(uid) && resource.data.status == "pending" && request.resource.data.status == "approved"
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "isAvailable", "updatedAt"]));
+    }
+    match /vehicles/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.ownerUid == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+    match /addresses/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.ownerUid == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+      allow update, delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+    }
+    match /services/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /serviceAreas/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /pricingRules/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /bookings/{id} {
+      allow read: if signedIn() && (resource.data.customerUid == request.auth.uid || resource.data.assignedWorkerUid == request.auth.uid || resource.data.assignedWorkerUid == workerDocId() || isAdmin());
+      // Staging (pre-Functions): constrained direct writes. When Cloud Functions deploy (Blaze),
+      // functions bypass rules and remain the preferred path (PRD §9/§10).
+      allow create: if isAdmin() || (signedIn() && request.resource.data.customerUid == request.auth.uid
+        && request.resource.data.status in ["requested", "awaiting_payment", "confirmed"]
+        && request.resource.data.priceSnapshot.currency == "INR");
+      allow update: if isAdmin()
+        || (signedIn() && resource.data.customerUid == request.auth.uid
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "scheduledAt", "cancelReason", "rating", "paymentMethod", "updatedAt"])
+            && (request.resource.data.status == resource.data.status || request.resource.data.status in ["cancelled", "completed"]))
+        || (signedIn() && (resource.data.assignedWorkerUid == request.auth.uid || resource.data.assignedWorkerUid == workerDocId())
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "checklistDone", "updatedAt", "completedAt"])
+            && request.resource.data.status in ["en_route", "arrived", "in_progress", "pending_verification", "completed"]);
+      allow delete: if false;
+    }
+    match /subscriptions/{id} {
+      allow read: if signedIn() && (resource.data.customerUid == request.auth.uid || isAdmin());
+      allow create: if signedIn() && request.resource.data.customerUid == request.auth.uid;
+      allow update: if isAdmin() || (signedIn() && resource.data.customerUid == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "visitBalance", "nextVisitAt", "timeWindow", "updatedAt"]));
+      allow delete: if false;
+    }
+    match /subscriptionOccurrences/{id} { allow read: if isAdmin() || (signedIn() && resource.data.customerUid == request.auth.uid); allow write: if isAdmin(); }
+    match /payments/{id} {
+      allow read: if signedIn() && (resource.data.customerUid == request.auth.uid || isFinance());
+      allow create: if signedIn() && request.resource.data.customerUid == request.auth.uid && request.resource.data.status == "pending";
+      allow update: if isFinance();
+      allow delete: if false;
+    }
+    match /refunds/{id} { allow read: if isFinance(); allow write: if isFinance(); }
+    match /payouts/{id} { allow read: if isFinance() || (signedIn() && resource.data.workerUid == request.auth.uid); allow write: if isFinance(); }
+    match /workerShifts/{id} { allow read: if isAdmin() || (signedIn() && resource.data.workerUid == request.auth.uid); allow create, update: if signedIn() && request.resource.data.workerUid == request.auth.uid; allow delete: if false; }
+    match /workerAssignments/{id} { allow read: if isAdmin() || (signedIn() && resource.data.workerUid == request.auth.uid); allow create: if isAdmin(); allow update, delete: if false; }
+    match /workerLocations/{workerUid} {
+      allow read: if isAdmin() || isSelf(workerUid);
+      allow create, update: if signedIn() && (workerUid == workerDocId() || workerUid == request.auth.uid);
+      allow delete: if signedIn();
+    }
+    match /jobEvidence/{id} { allow read: if isAdmin() || (signedIn() && (resource.data.workerUid == request.auth.uid || resource.data.customerUid == request.auth.uid)); allow create: if signedIn(); allow update, delete: if false; }
+    match /reviews/{id} { allow read: if true; allow create: if signedIn() && request.resource.data.customerUid == request.auth.uid; allow update, delete: if false; }
+    match /notifications/{id} {
+      allow read: if signedIn() && (resource.data.recipientUid == request.auth.uid || isAdmin());
+      allow create: if signedIn();
+      allow update: if signedIn() && resource.data.recipientUid == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["read"]);
+      allow delete: if false;
+    }
+    match /supportTickets/{id} {
+      allow read: if isAdmin() || (signedIn() && resource.data.customerUid == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.customerUid == request.auth.uid;
+      allow update: if isAdmin();
+      allow delete: if false;
+    }
+    match /auditLogs/{id} { allow read: if isAdmin(); allow create: if isAdmin(); allow update, delete: if false; }
+    match /webhookEvents/{id} { allow read, write: if false; }
+    match /idempotencyKeys/{id} { allow read, write: if false; }
+    match /appConfig/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /{document=**} { allow read, write: if false; }
+  }
+}

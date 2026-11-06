@@ -1,0 +1,1 @@
+{ "name":"WashPro Worker", "short_name":"WP Worker", "description":"Doorstep car wash jobs for WashPro professionals", "start_url":"/", "display":"standalone", "background_color":"#0B2A4A", "theme_color":"#0B2A4A", "orientation":"portrait", "icons":[{ "src":"/icon.svg", "sizes":"any", "type":"image/svg+xml", "purpose":"any maskable" }] }

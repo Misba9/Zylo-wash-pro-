@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "832079032419",
+    "project_id": "wash-pro-7f3b1",
+    "storage_bucket": "wash-pro-7f3b1.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:832079032419:android:db186e57ff6db912f5c856",
+        "android_client_info": {
+          "package_name": "com.washpro.customer"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "832079032419-2vejd7n7okrfdoqv13vroheldr7a0ivh.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.washpro.customer",
+            "certificate_hash": "f048bec113e198e4626dffe161b1dbff92b8d7ab"
+          }
+        },
+        {
+          "client_id": "832079032419-fsj7at7n7g9bui53q7ue30ikb637r5m0.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBktkLj8jHVgeJb9XIeNxm8tbjNBj2N3yY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "832079032419-fsj7at7n7g9bui53q7ue30ikb637r5m0.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "832079032419-8ve0vdlb51eqfuursi12ff25ovq8v4ld.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.washpro.customer"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

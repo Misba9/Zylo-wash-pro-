@@ -1,0 +1,2 @@
+# Booking & Assignment Workflow
+Status machine: requested → awaiting_payment → confirmed → assigned → en_route → arrived → in_progress → pending_verification → completed (cancelled/under_review branches). Enforced in shared-types `canTransition` + `updateBookingStatus` function. Assignment: recommendWorkers scores area/service/availability/rating/workload/distance; admin confirms/overrides (audit reason); transactional assign prevents double-booking. Trip: startWorkerTrip → recordWorkerLocation (15–30s, assigned worker only) → arrival stops tracking.
