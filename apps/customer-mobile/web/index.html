@@ -18,21 +18,56 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="ZYLO — Doorstep car washing & detailing in Hyderabad.">
+  <meta name="theme-color" content="#123F36">
 
   <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="washpro_customer">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="ZYLO">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
   <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>washpro_customer</title>
+  <title>ZYLO</title>
   <link rel="manifest" href="manifest.json">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #F2F7F3;
+      color: #122019;
+      font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+    }
+    .zylo-boot {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 10px;
+      background: linear-gradient(160deg, #123F36, #2A6B5C);
+      color: #F2F5F3;
+      z-index: 9999;
+    }
+    .zylo-boot strong {
+      font-size: 28px;
+      letter-spacing: -0.4px;
+    }
+    .zylo-boot span {
+      opacity: 0.85;
+      font-size: 13px;
+    }
+  </style>
 </head>
 <body>
+  <div class="zylo-boot" id="zylo-boot">
+    <strong>ZYLO</strong>
+    <span>Loading your wash experience…</span>
+  </div>
   <!--
     You can customize the "flutter_bootstrap.js" script.
     This is useful to provide a custom configuration to the Flutter loader
@@ -41,6 +76,12 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
+  <script>
+    window.addEventListener('flutter-first-frame', function () {
+      var el = document.getElementById('zylo-boot');
+      if (el) el.remove();
+    });
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

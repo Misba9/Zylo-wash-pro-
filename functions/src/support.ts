@@ -6,11 +6,13 @@ import { db, FieldValue, requireAuth, requireRole, audit, notify } from "./share
 
 /** Automatic account deletion (Play policy + GDPR-style erasure).
  *  Erases profile, vehicles, addresses, subscriptions, notifications and
- *  support tickets; anonymises bookings/payments (kept for tax law);
- *  finally deletes the Firebase Auth user. Callable only by the owner. */
+ *  support tickets; anonymises bookings/payments (kept for tax/settlement);
+ *  deletes Storage profile objects; finally deletes the Firebase Auth user.
+ *  Callable only by the owner. */
 export const deleteMyAccount = onCall(async (req) => {
   const uid = requireAuth(req);
   const { getAuth } = await import("firebase-admin/auth");
+  const { getStorage } = await import("firebase-admin/storage");
   const batchLimit = 400;
   const deleteQuery = async (coll: string, field: string) => {
     const snap = await db.collection(coll).where(field, "==", uid).get();
@@ -20,12 +22,36 @@ export const deleteMyAccount = onCall(async (req) => {
       await batch.commit();
     }
   };
-  const anonymiseQuery = async (coll: string) => {
-    const snap = await db.collection(coll).where("customerUid", "==", uid).get();
+  const anonymiseBookings = async () => {
+    const snap = await db.collection("bookings").where("customerUid", "==", uid).get();
     for (let i = 0; i < snap.docs.length; i += batchLimit) {
       const batch = db.batch();
       snap.docs.slice(i, i + batchLimit).forEach((d) =>
-        batch.update(d.ref, { customerName: "Deleted user", customerPhone: "", customerEmail: "" }));
+        batch.update(d.ref, {
+          customerName: "Deleted user",
+          customerPhone: "",
+          customerEmail: "",
+          addressLabel: "Redacted",
+          addressSnapshot: "Redacted",
+          "serviceLocation.formattedAddress": "Redacted",
+          "serviceLocation.latitude": null,
+          "serviceLocation.longitude": null,
+          deletedCustomerAt: FieldValue.serverTimestamp(),
+        }));
+      await batch.commit();
+    }
+  };
+  const anonymisePayments = async () => {
+    const snap = await db.collection("payments").where("customerUid", "==", uid).get();
+    for (let i = 0; i < snap.docs.length; i += batchLimit) {
+      const batch = db.batch();
+      snap.docs.slice(i, i + batchLimit).forEach((d) =>
+        batch.update(d.ref, {
+          customerName: "Deleted user",
+          customerPhone: "",
+          customerEmail: "",
+          deletedCustomerAt: FieldValue.serverTimestamp(),
+        }));
       await batch.commit();
     }
   };
@@ -34,10 +60,22 @@ export const deleteMyAccount = onCall(async (req) => {
   await deleteQuery("subscriptions", "customerUid");
   await deleteQuery("notifications", "recipientUid");
   await deleteQuery("supportTickets", "customerUid");
-  await anonymiseQuery("bookings");
-  await anonymiseQuery("payments");
-  await db.doc(`users/${uid}`).delete();
-  await db.collection("auditLogs").add({ actor: uid, action: "deleteAccount", target: uid, reason: "self-service in-app deletion", createdAt: FieldValue.serverTimestamp() });
+  await anonymiseBookings();
+  await anonymisePayments();
+  try {
+    const bucket = getStorage().bucket();
+    await bucket.deleteFiles({ prefix: `profiles/${uid}/` });
+  } catch {
+    /* bucket may be unset in emulator — non-fatal */
+  }
+  await db.doc(`users/${uid}`).delete().catch(() => {});
+  await db.collection("auditLogs").add({
+    actor: uid,
+    action: "deleteAccount",
+    target: uid,
+    reason: "self-service in-app deletion",
+    createdAt: FieldValue.serverTimestamp(),
+  });
   await getAuth().deleteUser(uid);
   return { ok: true };
 });

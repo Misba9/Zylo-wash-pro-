@@ -1,16 +1,31 @@
 rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
-    function isAdmin() { return request.auth != null && (request.auth.token.role == "admin" || request.auth.token.role == "super_admin"); }
-    function validImage() { return request.resource.size < 10 * 1024 * 1024 && request.resource.contentType.matches('image/.*'); }
-    // Job evidence: jobs/{bookingId}/{before|after}/{file}
-    match /jobs/{bookingId}/{phase}/{file} {
-      allow read: if isAdmin() || (request.auth != null && (bookingId in request.auth.token.bookingIds || request.auth.uid != null));
-      allow write: if request.auth != null && request.auth.token.role == "worker" && validImage();
+    function isAdmin() {
+      return request.auth != null
+        && (request.auth.token.role == "admin" || request.auth.token.role == "super_admin");
     }
+    function isWorker() {
+      return request.auth != null && request.auth.token.role == "worker";
+    }
+    function validImage() {
+      return request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+    // Job evidence: only admins and authenticated workers (claim) may read/write.
+    // Customers receive evidence via Admin SDK / signed URLs when needed.
+    match /jobs/{bookingId}/{phase}/{file} {
+      allow read: if isAdmin() || isWorker();
+      allow write: if isWorker() && validImage()
+        && phase in ["before", "after", "checklist"];
+    }
+    // Profile photos: owner write; owner or admin read.
     match /profiles/{uid}/{file} {
-      allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == uid && validImage();
+      allow read: if request.auth != null
+        && (request.auth.uid == uid || isAdmin());
+      allow write: if request.auth != null
+        && request.auth.uid == uid
+        && validImage();
     }
     match /{allPaths=**} { allow read, write: if false; }
   }

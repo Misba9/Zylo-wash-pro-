@@ -37,8 +37,15 @@ export async function alreadyProcessed(key: string, scope: string): Promise<bool
   await ref.set({ scope, key, createdAt: FieldValue.serverTimestamp() });
   return false;
 }
-export const hmacValid = (payload: string, signature: string, secret: string) =>
-  crypto.timingSafeEqual(Buffer.from(crypto.createHmac("sha256", secret).update(payload).digest("hex")), Buffer.from(signature));
+/** Constant-time hex HMAC compare; false on length mismatch (never throws). */
+export function hmacValid(payload: string, signature: string, secret: string): boolean {
+  if (!secret || !signature) return false;
+  const expected = crypto.createHmac("sha256", secret).update(payload).digest("hex");
+  const a = Buffer.from(expected, "utf8");
+  const b = Buffer.from(signature, "utf8");
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
 export const TRANSITIONS: Record<string, string[]> = {
   requested:["awaiting_payment","confirmed","cancelled"], awaiting_payment:["confirmed","cancelled"],
   confirmed:["assigned","cancelled","under_review"], assigned:["en_route","assigned","cancelled","under_review"],

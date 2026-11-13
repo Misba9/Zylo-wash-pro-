@@ -28,8 +28,14 @@ service cloud.firestore {
     }
     match /users/{uid} {
       allow read: if isSelf(uid) || isAdmin();
-      allow create: if isSelf(uid) && !request.resource.data.keys().hasAny(["role", "admin", "isSuperAdmin"]);
-      allow update: if isSelf(uid) && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["name", "email", "profileImagePath", "updatedAt", "fcmToken", "phone", "workerDocId"]);
+      // Customers own their profile but cannot set roles / admin flags / payment verification fields.
+      allow create: if isSelf(uid)
+        && !request.resource.data.keys().hasAny(["role", "admin", "isSuperAdmin", "razorpaySignatureVerified", "paymentStatus"]);
+      allow update: if isSelf(uid)
+        && !request.resource.data.diff(resource.data).affectedKeys()
+            .hasAny(["role", "admin", "isSuperAdmin"])
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(["name", "email", "profileImagePath", "updatedAt", "fcmToken", "phone", "workerDocId", "lastLoginAt", "authProvider", "defaultAddressId", "selectedAddressId"]);
       allow delete: if false;
     }
     match /workers/{uid} {
@@ -55,38 +61,87 @@ service cloud.firestore {
     }
     match /addresses/{id} {
       allow read: if isAdmin() || (signedIn() && resource.data.ownerUid == request.auth.uid);
-      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
-      allow update, delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
+      // Customers may only create/update their own addresses. Coordinates, when
+      // present, must be finite numbers in valid ranges (legacy docs may omit them).
+      allow create: if signedIn()
+        && request.resource.data.ownerUid == request.auth.uid
+        && (!('latitude' in request.resource.data) || request.resource.data.latitude is number)
+        && (!('longitude' in request.resource.data) || request.resource.data.longitude is number);
+      allow update: if signedIn()
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && (!('latitude' in request.resource.data) || request.resource.data.latitude is number)
+        && (!('longitude' in request.resource.data) || request.resource.data.longitude is number);
+      allow delete: if signedIn() && resource.data.ownerUid == request.auth.uid;
     }
     match /services/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /serviceCategories/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /addons/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /plans/{id} { allow read: if true; allow write: if isAdmin(); }
+    match /coupons/{id} {
+      // Customers may get a coupon by code/doc id for UX; list + writes admin-only.
+      // Redemption limits are enforced in Cloud Functions.
+      allow get: if signedIn();
+      allow list: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
     match /serviceAreas/{id} { allow read: if true; allow write: if isAdmin(); }
     match /pricingRules/{id} { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /analyticsDaily/{id} { allow read: if isAdmin(); allow write: if false; }
+    match /analyticsMonthly/{id} { allow read: if isAdmin(); allow write: if false; }
     match /bookings/{id} {
       allow read: if signedIn() && (resource.data.customerUid == request.auth.uid || resource.data.assignedWorkerUid == request.auth.uid || resource.data.assignedWorkerUid == workerDocId() || isAdmin());
-      // Staging (pre-Functions): constrained direct writes. When Cloud Functions deploy (Blaze),
-      // functions bypass rules and remain the preferred path (PRD §9/§10).
+      // Customer create: online → awaiting_payment only; cash → confirmed allowed.
+      // paymentStatus must be pending/not_required — never paid/authorized from client.
+      // createPaymentOrder recomputes amount from catalog (trusted_amount).
       allow create: if isAdmin() || (signedIn() && request.resource.data.customerUid == request.auth.uid
-        && request.resource.data.status in ["requested", "awaiting_payment", "confirmed"]
-        && request.resource.data.priceSnapshot.currency == "INR");
+        && request.resource.data.priceSnapshot.currency == "INR"
+        && request.resource.data.priceSnapshot.totalPaise is int
+        && request.resource.data.priceSnapshot.totalPaise >= 100
+        && request.resource.data.paymentStatus in ["pending", "not_required"]
+        && (
+          (request.resource.data.paymentMethod == "online"
+            && request.resource.data.status == "awaiting_payment")
+          || (request.resource.data.paymentMethod == "cash"
+            && request.resource.data.status in ["requested", "confirmed", "awaiting_payment"])
+        ));
+      // Customers may cancel or rate only — never self-complete or rewrite priceSnapshot.
       allow update: if isAdmin()
         || (signedIn() && resource.data.customerUid == request.auth.uid
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny(["serviceLocation", "serviceLocationCapturedAt", "addressSnapshot", "addressId", "addressLabel", "customerUid", "priceSnapshot", "paymentStatus", "assignedWorkerUid"])
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "scheduledAt", "cancelReason", "rating", "paymentMethod", "updatedAt"])
-            && (request.resource.data.status == resource.data.status || request.resource.data.status in ["cancelled", "completed"]))
+            && (request.resource.data.status == resource.data.status || request.resource.data.status == "cancelled"))
         || (signedIn() && (resource.data.assignedWorkerUid == request.auth.uid || resource.data.assignedWorkerUid == workerDocId())
+            && !request.resource.data.diff(resource.data).affectedKeys()
+                .hasAny(["serviceLocation", "serviceLocationCapturedAt", "addressSnapshot", "addressId", "latitude", "longitude", "customerUid", "priceSnapshot", "paymentStatus"])
             && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "checklistDone", "updatedAt", "completedAt"])
-            && request.resource.data.status in ["en_route", "arrived", "in_progress", "pending_verification", "completed"]);
+            && request.resource.data.status in ["en_route", "arrived", "in_progress", "pending_verification"]);
       allow delete: if false;
     }
     match /subscriptions/{id} {
       allow read: if signedIn() && (resource.data.customerUid == request.auth.uid || isAdmin());
-      allow create: if signedIn() && request.resource.data.customerUid == request.auth.uid;
-      allow update: if isAdmin() || (signedIn() && resource.data.customerUid == request.auth.uid && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["status", "visitBalance", "nextVisitAt", "timeWindow", "updatedAt"]));
+      allow create: if signedIn() && request.resource.data.customerUid == request.auth.uid
+        && request.resource.data.status in ["pending_payment", "active"];
+      // visitBalance / status changes are Functions-only (prevent free washes).
+      allow update: if isAdmin() || (signedIn() && resource.data.customerUid == request.auth.uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(["timeWindow", "updatedAt"])
+        && request.resource.data.visitBalance == resource.data.visitBalance
+        && request.resource.data.status == resource.data.status);
       allow delete: if false;
     }
     match /subscriptionOccurrences/{id} { allow read: if isAdmin() || (signedIn() && resource.data.customerUid == request.auth.uid); allow write: if isAdmin(); }
     match /payments/{id} {
       allow read: if signedIn() && (resource.data.customerUid == request.auth.uid || isFinance());
-      allow create: if signedIn() && request.resource.data.customerUid == request.auth.uid && request.resource.data.status == "pending";
+      // Customers may only create a pending cash placeholder. Online/Razorpay
+      // payment rows (and all status/verification fields) are written by Cloud Functions.
+      allow create: if signedIn()
+        && request.resource.data.customerUid == request.auth.uid
+        && request.resource.data.status == "pending"
+        && request.resource.data.method == "cash"
+        && request.resource.data.get("razorpaySignatureVerified", false) == false
+        && !request.resource.data.keys().hasAny(["providerRef", "razorpayPaymentId"]);
+      // Trusted payment status / signature / gateway fields: server or finance only.
       allow update: if isFinance();
       allow delete: if false;
     }

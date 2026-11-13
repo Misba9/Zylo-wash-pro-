@@ -1,1 +1,28 @@
-{ "name":"WashPro Worker", "short_name":"WP Worker", "description":"Doorstep car wash jobs for WashPro professionals", "start_url":"/", "display":"standalone", "background_color":"#0B2A4A", "theme_color":"#0B2A4A", "orientation":"portrait", "icons":[{ "src":"/icon.svg", "sizes":"any", "type":"image/svg+xml", "purpose":"any maskable" }] }
+{
+  "name": "ZYLO Field",
+  "short_name": "ZYLO Field",
+  "description": "Field operations for ZYLO doorstep car wash & detailing — jobs, routes, and earnings.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F2F7F3",
+  "theme_color": "#123F36",
+  "lang": "en-IN",
+  "categories": ["business", "productivity"],
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

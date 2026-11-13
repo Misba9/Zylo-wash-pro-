@@ -1,10 +1,10 @@
-// WashPro Customer App — Flutter (PRD §5) · UI matched to approved design mockups.
+// Zylo Customer App — Flutter (PRD §5) · UI matched to approved design mockups.
 // Demo mode mirrors Firestore/Functions; production: replace DemoStore calls
 // with cloud_functions callables (createBooking / createPaymentOrder / verifyPayment).
 import 'dart:async';
 import 'dart:ui' show PlatformDispatcher;
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_crashlytics/firebase_crashlytics.dart';
@@ -20,6 +20,13 @@ import 'data/app_data.dart';
 export 'data/app_data.dart';
 import 'data/repository.dart';
 import 'services/app_services.dart';
+import 'services/phone_auth.dart';
+import 'theme/washpro_theme.dart';
+import 'widgets/curved_nav_bar.dart';
+import 'widgets/vehicle_sheet.dart';
+import 'screens/location_picker_page.dart';
+import 'pricing/booking_price.dart';
+import 'widgets/upcoming_booking_card.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,17 +41,33 @@ void main() async {
     fbLive = true;
     // Explicit offline cache: reads keep working on poor networks and
     // queued writes sync when connectivity returns.
-    FirebaseFirestore.instance.settings = const Settings(
+    // Web uses IndexedDB persistence; unlimited cache is mobile-oriented.
+    FirebaseFirestore.instance.settings = Settings(
         persistenceEnabled: true,
-        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED);
-    // Crash reporting: Flutter + async errors land in Crashlytics.
-    FlutterError.onError = FirebaseCrashlytics.instance.recordFlutterFatalError;
-    PlatformDispatcher.instance.onError = (error, stack) {
-      FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
-      return true;
-    };
-    FirebaseMessaging.onBackgroundMessage(fcmBackgroundHandler);
-  } catch (_) {
+        cacheSizeBytes:
+            kIsWeb ? 40 * 1024 * 1024 : Settings.CACHE_SIZE_UNLIMITED);
+    // Crashlytics + FCM background handlers are not supported on Flutter web.
+    // Registering them there aborts startup and leaves a blank Hosting page.
+    if (!kIsWeb) {
+      FlutterError.onError =
+          FirebaseCrashlytics.instance.recordFlutterFatalError;
+      PlatformDispatcher.instance.onError = (error, stack) {
+        FirebaseCrashlytics.instance.recordError(error, stack, fatal: true);
+        return true;
+      };
+      FirebaseMessaging.onBackgroundMessage(fcmBackgroundHandler);
+    } else {
+      FlutterError.onError = (details) {
+        FlutterError.presentError(details);
+        debugPrint('FlutterError: ${details.exceptionAsString()}');
+      };
+      PlatformDispatcher.instance.onError = (error, stack) {
+        debugPrint('Uncaught: $error\n$stack');
+        return true;
+      };
+    }
+  } catch (e, st) {
+    debugPrint('Firebase init failed: $e\n$st');
     fbLive = false;
   }
   await AppTheme.load();
@@ -56,16 +79,17 @@ void main() async {
   runApp(const WashProApp());
 }
 
-// ---------- Design tokens (from mockups) ----------
-const dark = Color(0xFF0A3828); // deep forest green
-const dark2 = Color(0xFF06231A);
-const green = Color(0xFF0E9F6E);
+// ---------- Design tokens (Zylo brand) ----------
+const dark = WpColors.primary;
+const dark2 = Color(0xFF0B2C26);
+const green = WpColors.secondary;
 const bright = Color(0xFF39C98B);
-const mint = Color(0xFFDFF3E7);
-const mintBg = Color(0xFFF2F7F3);
-const ink = Color(0xFF122019);
-const muted = Color(0xFF71857A);
-const line = Color(0xFFE4EEE7);
+const mint = WpColors.mint;
+const mintBg = WpColors.mintBg;
+const ink = WpColors.ink;
+const muted = WpColors.muted;
+const line = WpColors.line;
+const accentGold = WpColors.accent;
 String inr(int paise) => '₹${(paise / 100).round()}';
 String inrFull(int paise) => '₹${paise ~/ 100}';
 const months = [
@@ -140,7 +164,7 @@ class _SplashGateState extends State<SplashGate> {
               child: Column(mainAxisSize: MainAxisSize.min, children: [
         CircularProgressIndicator(color: green),
         SizedBox(height: 14),
-        Text('Loading WashPro…',
+        Text('Loading Zylo…',
             style: TextStyle(color: muted, fontWeight: FontWeight.w600))
       ])));
 }
@@ -152,31 +176,12 @@ class WashProApp extends StatelessWidget {
       ValueListenableBuilder<ThemeMode>(
           valueListenable: AppTheme.mode,
           builder: (_, mode, __) => MaterialApp(
-              title: 'WashPro',
+              title: 'Zylo',
               debugShowCheckedModeBanner: false,
               navigatorKey: appNavKey,
               themeMode: mode,
-              theme: ThemeData(
-                  useMaterial3: true,
-                  scaffoldBackgroundColor: mintBg,
-                  colorScheme:
-                      ColorScheme.fromSeed(seedColor: green, primary: dark),
-                  appBarTheme: const AppBarTheme(
-                      backgroundColor: mintBg,
-                      elevation: 0,
-                      foregroundColor: ink)),
-              darkTheme: ThemeData(
-                  useMaterial3: true,
-                  brightness: Brightness.dark,
-                  scaffoldBackgroundColor: const Color(0xFF0C1A13),
-                  colorScheme: ColorScheme.fromSeed(
-                      seedColor: green,
-                      primary: bright,
-                      brightness: Brightness.dark),
-                  appBarTheme: const AppBarTheme(
-                      backgroundColor: Color(0xFF0C1A13),
-                      elevation: 0,
-                      foregroundColor: Colors.white)),
+              theme: WashProTheme.light,
+              darkTheme: WashProTheme.dark,
               // Global offline banner — visible on every screen.
               builder: (ctx, child) => Stack(children: [
                     child ?? const SizedBox.shrink(),
@@ -227,23 +232,30 @@ Widget wpCard(
         EdgeInsets p = const EdgeInsets.all(18),
         Color? color,
         VoidCallback? onTap,
-        bool selected = false}) =>
-    GestureDetector(
-        onTap: onTap,
-        child: Container(
-            padding: p,
-            decoration: BoxDecoration(
-                color: color ?? Colors.white,
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(
-                    color: selected ? green : line, width: selected ? 1.6 : 1),
-                boxShadow: [
-                  BoxShadow(
-                      color: dark.withOpacity(.04),
-                      blurRadius: 14,
-                      offset: const Offset(0, 4))
-                ]),
-            child: child));
+        bool selected = false,
+        BuildContext? context}) {
+  final ctx = context ?? appNavKey.currentContext;
+  final isDark = ctx != null && Theme.of(ctx).brightness == Brightness.dark;
+  final bg = color ?? (isDark ? WpColors.darkSurface : Colors.white);
+  final border = selected
+      ? green
+      : (isDark ? WpColors.darkLine : line);
+  return GestureDetector(
+      onTap: onTap,
+      child: Container(
+          padding: p,
+          decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(22),
+              border: Border.all(color: border, width: selected ? 1.6 : 1),
+              boxShadow: [
+                BoxShadow(
+                    color: dark.withValues(alpha: isDark ? .25 : .04),
+                    blurRadius: 14,
+                    offset: const Offset(0, 4))
+              ]),
+          child: child));
+}
 /// Error state with Retry — shown when a live load failed (poor network,
 /// rules, …) instead of leaving a silently empty/stale screen.
 Widget loadErrorBanner(BuildContext c, Future<void> Function() retry) =>
@@ -283,6 +295,23 @@ Widget pill(String t, {Color bg = mint, Color fg = dark}) => Container(
             fontSize: 10.5,
             fontWeight: FontWeight.w800,
             letterSpacing: .7)));
+Widget _whyRow(IconData icon, String title, String body) => Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, color: green, size: 22),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 14)),
+              Text(body, style: const TextStyle(color: muted, fontSize: 12.5)),
+            ],
+          ),
+        ),
+      ],
+    );
+
 Widget statusPill(String s) {
   if (s == 'completed') return pill('COMPLETED', bg: mint, fg: dark);
   if (s == 'cancelled')
@@ -346,14 +375,16 @@ Widget sectionLabel(String t) => Text(t,
         letterSpacing: 1.4));
 Widget logoRow({bool light = false}) =>
     Row(mainAxisSize: MainAxisSize.min, children: [
-      Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(
-              color: green, borderRadius: BorderRadius.circular(10)),
-          child: const Icon(Icons.auto_awesome, color: Colors.white, size: 20)),
+      ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: Image.asset(
+            'assets/images/zylo-logo.jpeg',
+            width: 36,
+            height: 36,
+            fit: BoxFit.cover,
+          )),
       const SizedBox(width: 9),
-      Text('WashPro',
+      Text('Zylo',
           style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.w800,
@@ -384,7 +415,7 @@ void initPushForCustomer(String uid) {
     if (ctx == null) return;
     ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(
         content: Text(
-            '${m.notification?.title ?? 'WashPro'} — ${m.notification?.body ?? ''}'),
+            '${m.notification?.title ?? 'Zylo'} — ${m.notification?.body ?? ''}'),
         backgroundColor: dark,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -412,6 +443,7 @@ void routePushTap(dynamic m) {
 // ---------- AUTH SERVICE ----------
 // firebase-auth-basics skill (Flutter): google_sign_in 7.x — initialize() once,
 // authenticate() (signIn() removed), web uses signInWithPopup to avoid DWDS hangs.
+// Phone OTP uses Firebase Auth verifyPhoneNumber / signInWithPhoneNumber (web reCAPTCHA).
 class AuthService {
   static bool _googleReady = false;
   static Future<void> _initGoogle() async {
@@ -453,11 +485,16 @@ class AuthService {
       FirebaseAuth.instance.sendPasswordResetEmail(email: email.trim());
 
   /// Change password (Settings): re-authenticates, then updates.
-  /// Google-signed-in accounts have no password — handled by the caller.
+  /// Google/phone accounts have no password — handled by the caller.
   static bool get hasPasswordProvider =>
       FirebaseAuth.instance.currentUser?.providerData
           .any((p) => p.providerId == 'password') ??
       false;
+
+  static bool get hasPhoneProvider =>
+      FirebaseAuth.instance.currentUser?.providerData
+          .any((p) => p.providerId == 'phone') ??
+      (FirebaseAuth.instance.currentUser?.phoneNumber?.isNotEmpty ?? false);
 
   static Future<void> changePassword(String current, String next) async {
     final u = FirebaseAuth.instance.currentUser;
@@ -470,7 +507,6 @@ class AuthService {
   /// Automatic account deletion: the deleteMyAccount Cloud Function erases
   /// profile/vehicles/addresses/subscriptions/notifications and the Auth
   /// user server-side (financial records are anonymised, kept per law).
-  /// Throws PaymentUnavailable-style message if Functions aren't live yet.
   static Future<void> deleteAccountPermanently() async {
     try {
       await FirebaseFunctions.instance
@@ -497,108 +533,403 @@ class AuthService {
   }
 }
 
-// ---------- AUTH ----------
+Future<void> enterAuthenticated(BuildContext context, User u,
+    {bool popOnly = false, bool fromOtp = false}) async {
+  guestBrowsing = false;
+  fbUid = u.uid;
+  await WashProRepository.loadFor(u.uid, authUser: u);
+  initPushForCustomer(u.uid);
+  if (!context.mounted) return;
+  if (popOnly) {
+    // OTP sits on top of Auth — pop both so requireLogin gets the result.
+    // Capture Navigator before the first pop (OTP context unmounts after it).
+    final nav = Navigator.of(context);
+    if (fromOtp) nav.pop();
+    nav.pop(true);
+    return;
+  }
+  Navigator.pushAndRemoveUntil(
+      context,
+      MaterialPageRoute(builder: (_) => afterLoginDestination()),
+      (_) => false);
+}
+
+/// Prompts login when a guest tries to book / save data. Returns true if signed in.
+Future<bool> requireLogin(BuildContext context,
+    {String message = 'Sign in to continue your booking'}) async {
+  if (isSignedIn) return true;
+  if (context.mounted) toast(context, message);
+  final ok = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+          builder: (_) => const AuthPage(returnAfterLogin: true)));
+  return ok == true && isSignedIn;
+}
+
+Future<void> enterGuestBrowse(BuildContext context) async {
+  guestBrowsing = true;
+  fbUid = null;
+  AppState.profileLoaded = true;
+  await WashProRepository.loadCatalog();
+  if (!context.mounted) return;
+  Navigator.pushReplacement(
+      context, MaterialPageRoute(builder: (_) => const Shell()));
+}
+
+// ---------- AUTH (simple phone OTP) ----------
 class AuthPage extends StatefulWidget {
-  const AuthPage({super.key});
+  const AuthPage({
+    super.key,
+    this.allowSkip = true,
+    this.returnAfterLogin = false,
+  });
+
+  /// Top-right Skip — browse services without signing in.
+  final bool allowSkip;
+
+  /// When opened from booking, pop back after successful login.
+  final bool returnAfterLogin;
+
   @override
   State<AuthPage> createState() => _AuthState();
 }
 
 class _AuthState extends State<AuthPage> {
-  final email = TextEditingController(), pass = TextEditingController();
-  bool signup = false, busy = false;
+  final phone = TextEditingController();
+  bool busy = false;
   String err = '';
+  DateTime? _lastOtpRequest;
 
-  Future<void> _forgot() async {
-    final ctrl = TextEditingController(text: email.text.trim());
-    final send = await showDialog<bool>(
-        context: context,
-        builder: (c) => AlertDialog(
-              title: const Text('Reset your password'),
-              content: Column(mainAxisSize: MainAxisSize.min, children: [
-                const Text(
-                    'We will email you a secure link to set a new password.'),
-                const SizedBox(height: 12),
-                TextField(
-                    controller: ctrl,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(
-                        labelText: 'Email address',
-                        prefixIcon: Icon(Icons.mail_outline))),
-              ]),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(c, false),
-                    child: const Text('Cancel')),
-                FilledButton(
-                    onPressed: () => Navigator.pop(c, true),
-                    child: const Text('Send reset link')),
-              ],
-            ));
-    if (send != true) return;
-    final em = ctrl.text.trim();
-    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(em)) {
-      setState(() => err = 'Enter a valid email to reset your password');
-      return;
-    }
-    try {
-      await AuthService.sendPasswordReset(em);
-      if (mounted)
-        setState(() =>
-            err = 'Reset link sent to $em — check your inbox (and spam).');
-    } on FirebaseAuthException catch (e) {
-      if (mounted)
-        setState(() => err = e.code == 'user-not-found'
-            ? 'No account with this email — create one first.'
-            : 'Could not send reset email (${e.code}). Try again.');
-    }
+  @override
+  void dispose() {
+    phone.dispose();
+    super.dispose();
   }
 
-  Future<void> _enter(User? u) async {
-    if (u != null) {
-      fbUid = u.uid;
-      await WashProRepository.loadFor(u.uid, authUser: u);
-      initPushForCustomer(u.uid);
-    } else {
-      // Offline/demo fallback only (Firebase unreachable): identity comes
-      // from the entered email; basic-details still runs next.
-      AppState.userEmail = email.text.trim();
-      AppState.profileLoaded = true;
+  Future<void> _finish(User u) =>
+      enterAuthenticated(context, u, popOnly: widget.returnAfterLogin);
+
+  Future<void> _sendOtp() async {
+    if (!fbLive) {
+      setState(() => err =
+          'Firebase is unavailable. Check your connection and try again.');
+      return;
     }
-    if (mounted)
-      Navigator.pushReplacement(
-          context, MaterialPageRoute(builder: (_) => afterLoginDestination()));
+    final e164 = toIndianE164(phone.text);
+    if (e164 == null) {
+      setState(() => err = 'Enter a valid 10-digit mobile number');
+      return;
+    }
+    if (_lastOtpRequest != null &&
+        DateTime.now().difference(_lastOtpRequest!) <
+            const Duration(seconds: 30)) {
+      final left =
+          30 - DateTime.now().difference(_lastOtpRequest!).inSeconds;
+      setState(() => err = 'Please wait ${left}s before requesting another OTP');
+      return;
+    }
+    if (!NetStatus.online.value) {
+      setState(() =>
+          err = 'You are offline. Connect to the internet to continue.');
+      return;
+    }
+    setState(() {
+      busy = true;
+      err = '';
+    });
+    try {
+      if (kIsWeb) {
+        final session = await PhoneAuthService.signInWithPhoneNumberWeb(e164);
+        _lastOtpRequest = DateTime.now();
+        if (!mounted) return;
+        await Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => OtpVerificationPage(
+                      e164: e164,
+                      webSession: session,
+                      returnAfterLogin: widget.returnAfterLogin,
+                    )));
+      } else {
+        final sent = await PhoneAuthService.verifyPhoneNumber(
+          e164: e164,
+          onAutoVerified: (user) async {
+            if (!mounted) return;
+            await _finish(user);
+          },
+        );
+        _lastOtpRequest = DateTime.now();
+        if (!mounted) return;
+        if (FirebaseAuth.instance.currentUser != null) return;
+        await Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => OtpVerificationPage(
+                      e164: e164,
+                      codeSent: sent,
+                      returnAfterLogin: widget.returnAfterLogin,
+                    )));
+      }
+    } on FirebaseAuthException catch (e) {
+      if (mounted) setState(() => err = friendlyPhoneAuthError(e));
+    } catch (e) {
+      debugPrint('[PhoneAuth] sendOtp.unexpected type=${e.runtimeType}');
+      if (mounted) {
+        setState(() => err =
+            'Could not send OTP. Check network and try again.');
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
   }
 
   Future<void> _google() async {
+    if (!fbLive) {
+      setState(() => err = 'Firebase is unavailable. Check your connection.');
+      return;
+    }
     setState(() {
       busy = true;
       err = '';
     });
     try {
       final u = await AuthService.signInWithGoogle();
-      if (u != null) {
-        await _enter(u);
+      if (u != null && mounted) {
+        await _finish(u);
         return;
       }
-      _enter(null);
+      if (mounted) setState(() => err = 'Google sign-in was cancelled.');
     } on FirebaseAuthException catch (e) {
-      setState(() => err =
-          'Google sign-in failed (${e.code}). Check that Google is enabled in Firebase Auth and try again.');
+      setState(() => err = 'Google sign-in failed (${e.code}). Try again.');
     } catch (_) {
-      if (mounted) _enter(null);
+      if (mounted) setState(() => err = 'Google sign-in failed. Please try again.');
     } finally {
       if (mounted) setState(() => busy = false);
     }
   }
 
-  Future<void> _emailAuth() async {
-    if (!RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email.text.trim())) {
-      setState(() => err = 'Enter a valid email address');
+  @override
+  Widget build(BuildContext context) {
+    final digits = phone.text.replaceAll(RegExp(r'\D'), '');
+    final preview =
+        digits.length == 10 ? formatIndianDisplay('+91$digits') : null;
+    return Scaffold(
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        body: SafeArea(
+            child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(22, 8, 22, 22),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(children: [
+                        logoRow(),
+                        const Spacer(),
+                        if (widget.allowSkip && !widget.returnAfterLogin)
+                          TextButton(
+                              onPressed: busy
+                                  ? null
+                                  : () => enterGuestBrowse(context),
+                              child: Text('Skip login',
+                                  style: TextStyle(
+                                      color: context.wpMuted,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13))),
+                        if (widget.returnAfterLogin)
+                          IconButton(
+                              onPressed: () => Navigator.pop(context, false),
+                              icon: const Icon(Icons.close)),
+                      ]),
+                      const SizedBox(height: 28),
+                      Text(
+                          widget.returnAfterLogin
+                              ? 'Sign in to book'
+                              : 'Sign in to Zylo',
+                          style: TextStyle(
+                              fontSize: 26,
+                              fontWeight: FontWeight.w800,
+                              color: context.wpInk,
+                              letterSpacing: -.4)),
+                      const SizedBox(height: 8),
+                      Text(
+                          widget.returnAfterLogin
+                              ? 'Use your mobile number to confirm your booking.'
+                              : 'Enter your mobile number. We’ll send a one-time code.',
+                          style: TextStyle(
+                              color: context.wpMuted,
+                              fontSize: 14.5,
+                              height: 1.35)),
+                      const SizedBox(height: 28),
+                      Text('Mobile number',
+                          style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              color: context.wpInk,
+                              fontSize: 13)),
+                      const SizedBox(height: 8),
+                      TextField(
+                          controller: phone,
+                          keyboardType: TextInputType.phone,
+                          maxLength: 10,
+                          autofillHints: const [AutofillHints.telephoneNumber],
+                          onChanged: (_) => setState(() => err = ''),
+                          onSubmitted: (_) => busy ? null : _sendOtp(),
+                          decoration: InputDecoration(
+                              hintText: '10-digit number',
+                              counterText: '',
+                              prefixIcon: Padding(
+                                  padding: const EdgeInsets.only(
+                                      left: 14, right: 8),
+                                  child: Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        const Text('🇮🇳',
+                                            style: TextStyle(fontSize: 18)),
+                                        const SizedBox(width: 6),
+                                        Text('+91',
+                                            style: TextStyle(
+                                                fontWeight: FontWeight.w800,
+                                                color: context.wpInk)),
+                                        const SizedBox(width: 8),
+                                        SizedBox(
+                                            height: 22,
+                                            child: VerticalDivider(
+                                                width: 1,
+                                                color: context.wpLine)),
+                                      ])),
+                              prefixIconConstraints: const BoxConstraints(
+                                  minWidth: 0, minHeight: 0))),
+                      if (preview != null)
+                        Padding(
+                            padding: const EdgeInsets.only(top: 8),
+                            child: Text('OTP will be sent to $preview',
+                                style: TextStyle(
+                                    color: context.wpMuted, fontSize: 12.5))),
+                      if (err.isNotEmpty)
+                        Padding(
+                            padding: const EdgeInsets.only(top: 10),
+                            child: Text(err,
+                                style: const TextStyle(
+                                    color: Color(0xFFB42318),
+                                    fontWeight: FontWeight.w600))),
+                      const SizedBox(height: 20),
+                      PrimaryBtn(
+                          label: busy ? 'Sending OTP…' : 'Send OTP',
+                          icon: Icons.arrow_forward,
+                          onTap: busy ? null : _sendOtp),
+                      const SizedBox(height: 18),
+                      Row(children: [
+                        Expanded(child: Divider(color: context.wpLine)),
+                        Padding(
+                            padding:
+                                const EdgeInsets.symmetric(horizontal: 10),
+                            child: Text('or',
+                                style: TextStyle(color: context.wpMuted))),
+                        Expanded(child: Divider(color: context.wpLine)),
+                      ]),
+                      const SizedBox(height: 14),
+                      OutlinedButton.icon(
+                          onPressed: busy ? null : _google,
+                          icon: const Text('G',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                  color: Color(0xFF4285F4),
+                                  fontSize: 17)),
+                          label: Text('Continue with Google',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: context.wpInk)),
+                          style: OutlinedButton.styleFrom(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 14),
+                              side: BorderSide(color: context.wpLine),
+                              shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16)))),
+                      const SizedBox(height: 28),
+                      Text(
+                          'By continuing you agree to Terms & Privacy Policy.',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              color: context.wpMuted, fontSize: 12)),
+                      if (widget.allowSkip && !widget.returnAfterLogin) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                            'Skip to explore services — sign in when you book.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: context.wpMuted, fontSize: 12)),
+                      ],
+                    ]))));
+  }
+}
+
+/// Six-digit OTP verification. Never displays or logs the OTP value.
+class OtpVerificationPage extends StatefulWidget {
+  const OtpVerificationPage({
+    super.key,
+    required this.e164,
+    this.codeSent,
+    this.webSession,
+    this.returnAfterLogin = false,
+  });
+  final String e164;
+  final PhoneOtpSession? codeSent;
+  final WebPhoneSession? webSession;
+  final bool returnAfterLogin;
+
+  @override
+  State<OtpVerificationPage> createState() => _OtpVerificationState();
+}
+
+class _OtpVerificationState extends State<OtpVerificationPage> {
+  final otp = TextEditingController();
+  bool busy = false;
+  String err = '';
+  String? verificationId;
+  int? resendToken;
+  WebPhoneSession? webSession;
+  Timer? _timer;
+  int _secondsLeft = 45;
+
+  @override
+  void initState() {
+    super.initState();
+    verificationId = widget.codeSent?.verificationId;
+    resendToken = widget.codeSent?.resendToken;
+    webSession = widget.webSession;
+    _startCountdown();
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    otp.dispose();
+    super.dispose();
+  }
+
+  void _startCountdown() {
+    _timer?.cancel();
+    setState(() => _secondsLeft = 45);
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      if (_secondsLeft <= 1) {
+        t.cancel();
+        setState(() => _secondsLeft = 0);
+      } else {
+        setState(() => _secondsLeft--);
+      }
+    });
+  }
+
+  Future<void> _verify() async {
+    final code = otp.text.trim();
+    if (!RegExp(r'^\d{6}$').hasMatch(code)) {
+      setState(() => err = 'Enter the 6-digit OTP');
       return;
     }
-    if (pass.text.length < 6) {
-      setState(() => err = 'Password must be at least 6 characters');
+    if (!NetStatus.online.value) {
+      setState(() => err = 'You are offline. Connect to verify your OTP.');
       return;
     }
     setState(() {
@@ -606,28 +937,67 @@ class _AuthState extends State<AuthPage> {
       err = '';
     });
     try {
-      final u = signup
-          ? await AuthService.signUpWithEmail(email.text, pass.text)
-          : await AuthService.signInWithEmail(email.text, pass.text);
-      await _enter(u);
+      User? user;
+      if (webSession != null) {
+        user = await PhoneAuthService.confirmWebCode(webSession!.confirmation, code);
+      } else if (verificationId != null) {
+        user = await PhoneAuthService.confirmCode(
+            verificationId: verificationId!, smsCode: code);
+      } else {
+        setState(() => err = 'Verification session missing. Go back and resend OTP.');
+        return;
+      }
+      if (user != null && mounted) {
+        await enterAuthenticated(context, user,
+            popOnly: widget.returnAfterLogin, fromOtp: true);
+      } else if (mounted) {
+        setState(() => err = 'Verification failed. Please try again.');
+      }
     } on FirebaseAuthException catch (e) {
-      final friendly = {
-        'invalid-credential':
-            'Wrong email or password. Try again, or create an account.',
-        'user-not-found': 'No account with this email — create one first.',
-        'wrong-password': 'Wrong password. Please try again.',
-        'email-already-in-use':
-            'This email already has an account — sign in instead.',
-        'weak-password': 'Password must be at least 6 characters.',
-        'invalid-email': 'Enter a valid email address.',
-        'configuration-not-found':
-            'Email/Password is not enabled yet in Firebase Auth.',
-        'too-many-requests': 'Too many attempts — wait a minute and retry.',
-      }[e.code];
-      setState(() =>
-          err = friendly ?? 'Sign-in failed (${e.code}). Please try again.');
+      if (mounted) setState(() => err = friendlyPhoneAuthError(e));
     } catch (_) {
-      _enter(null);
+      if (mounted) {
+        setState(() => err = 'Could not verify OTP. Check network and retry.');
+      }
+    } finally {
+      if (mounted) setState(() => busy = false);
+    }
+  }
+
+  Future<void> _resend() async {
+    if (_secondsLeft > 0 || busy) return;
+    setState(() {
+      busy = true;
+      err = '';
+    });
+    try {
+      if (kIsWeb) {
+        webSession =
+            await PhoneAuthService.signInWithPhoneNumberWeb(widget.e164);
+      } else {
+        final sent = await PhoneAuthService.verifyPhoneNumber(
+          e164: widget.e164,
+          forceResendingToken: resendToken,
+          onAutoVerified: (user) async {
+            if (!mounted) return;
+            await enterAuthenticated(context, user,
+                popOnly: widget.returnAfterLogin, fromOtp: true);
+          },
+        );
+        verificationId = sent.verificationId;
+        resendToken = sent.resendToken;
+      }
+      if (mounted) {
+        otp.clear();
+        _startCountdown();
+        toast(context, 'A new OTP has been sent');
+      }
+    } on FirebaseAuthException catch (e) {
+      if (mounted) setState(() => err = friendlyPhoneAuthError(e));
+    } catch (_) {
+      if (mounted) {
+        setState(() => err = 'Could not resend OTP. Please try again.');
+      }
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -635,130 +1005,85 @@ class _AuthState extends State<AuthPage> {
 
   @override
   Widget build(BuildContext context) => Scaffold(
+      appBar: AppBar(
+          title: const Text('Verify OTP'),
+          leading: IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: busy ? null : () => Navigator.pop(context))),
       body: SafeArea(
           child: SingleChildScrollView(
               padding: const EdgeInsets.all(22),
               child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    const SizedBox(height: 26),
-                    logoRow(),
-                    const SizedBox(height: 34),
-                    Container(
-                        padding: const EdgeInsets.all(22),
-                        decoration: BoxDecoration(
-                            gradient: const LinearGradient(
-                                colors: [dark, Color(0xFF11543C)]),
-                            borderRadius: BorderRadius.circular(24)),
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              pill('DOORSTEP DETAILING',
-                                  bg: mint.withOpacity(.9)),
-                              const SizedBox(height: 12),
-                              const Text('Your car deserves a\nfresh start.',
-                                  style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 26,
-                                      fontWeight: FontWeight.w800,
-                                      height: 1.15)),
-                              const SizedBox(height: 6),
-                              const Text('Expert care, right where you park.',
-                                  style: TextStyle(color: Colors.white70))
-                            ])),
-                    const SizedBox(height: 26),
-                    Text(signup ? 'Create your account' : 'Welcome back',
+                    const SizedBox(height: 12),
+                    const Text('Enter verification code',
+                        style: TextStyle(
+                            fontSize: 22, fontWeight: FontWeight.w800)),
+                    const SizedBox(height: 8),
+                    Text(
+                        'OTP sent to ${formatIndianDisplay(widget.e164)}',
+                        style: const TextStyle(color: muted)),
+                    Align(
+                        alignment: Alignment.centerLeft,
+                        child: TextButton(
+                            onPressed: busy
+                                ? null
+                                : () => Navigator.pop(context),
+                            child: const Text('Change mobile number',
+                                style: TextStyle(
+                                    color: green,
+                                    fontWeight: FontWeight.w700)))),
+                    const SizedBox(height: 8),
+                    TextField(
+                        controller: otp,
+                        keyboardType: TextInputType.number,
+                        maxLength: 6,
+                        autofillHints: const [AutofillHints.oneTimeCode],
+                        textAlign: TextAlign.center,
                         style: const TextStyle(
-                            fontSize: 20, fontWeight: FontWeight.w800)),
-                    const Text('Sign in with your email or Google account',
-                        style: TextStyle(color: muted)),
-                    const SizedBox(height: 14),
-                    TextField(
-                        controller: email,
-                        keyboardType: TextInputType.emailAddress,
-                        autofillHints: const [AutofillHints.email],
+                            fontSize: 28,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 10),
+                        onChanged: (_) => setState(() => err = ''),
                         decoration: InputDecoration(
-                            labelText: 'Email address',
-                            prefixIcon: const Icon(Icons.mail_outline),
+                            labelText: '6-digit OTP',
+                            counterText: '',
                             filled: true,
                             fillColor: Colors.white,
                             border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(15),
                                 borderSide: const BorderSide(color: line)))),
-                    const SizedBox(height: 10),
-                    TextField(
-                        controller: pass,
-                        obscureText: true,
-                        autofillHints: const [AutofillHints.password],
-                        decoration: InputDecoration(
-                            labelText: 'Password (min 6 characters)',
-                            prefixIcon: const Icon(Icons.lock_outline),
-                            filled: true,
-                            fillColor: Colors.white,
-                            border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(15),
-                                borderSide: const BorderSide(color: line)))),
-                    if (!signup)
-                      Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton(
-                              onPressed: busy ? null : _forgot,
-                              child: const Text('Forgot password?',
-                                  style: TextStyle(
-                                      color: green,
-                                      fontWeight: FontWeight.w700)))),
                     if (err.isNotEmpty)
                       Padding(
                           padding: const EdgeInsets.only(top: 8),
                           child: Text(err,
-                              style:
-                                  const TextStyle(color: Color(0xFFB42318)))),
-                    const SizedBox(height: 16),
+                              style: const TextStyle(
+                                  color: Color(0xFFB42318)))),
+                    const SizedBox(height: 18),
                     PrimaryBtn(
-                        label: busy
-                            ? 'Please wait…'
-                            : signup
-                                ? 'Create account'
-                                : 'Sign in',
-                        icon: Icons.arrow_forward,
-                        onTap: busy ? null : _emailAuth),
-                    const SizedBox(height: 10),
-                    Row(children: [
-                      const Expanded(child: Divider(color: line)),
+                        label: busy ? 'Verifying…' : 'Verify OTP',
+                        icon: Icons.verified_user_outlined,
+                        onTap: busy ? null : _verify),
+                    const SizedBox(height: 14),
+                    Center(
+                        child: _secondsLeft > 0
+                            ? Text('Resend OTP in ${_secondsLeft}s',
+                                style: const TextStyle(color: muted))
+                            : TextButton(
+                                onPressed: busy ? null : _resend,
+                                child: const Text('Resend OTP',
+                                    style: TextStyle(
+                                        color: green,
+                                        fontWeight: FontWeight.w800)))),
+                    if (kIsWeb)
                       const Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 10),
-                          child: Text('or', style: TextStyle(color: muted))),
-                      const Expanded(child: Divider(color: line))
-                    ]),
-                    const SizedBox(height: 10),
-                    OutlinedButton.icon(
-                        onPressed: busy ? null : _google,
-                        icon: const Text('G',
-                            style: TextStyle(
-                                fontWeight: FontWeight.w900,
-                                color: Color(0xFF4285F4),
-                                fontSize: 17)),
-                        label: const Text('Continue with Google',
-                            style: TextStyle(
-                                fontWeight: FontWeight.w700, color: ink)),
-                        style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            side: const BorderSide(color: line),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16)))),
-                    TextButton(
-                        onPressed: () => setState(() {
-                              signup = !signup;
-                              err = '';
-                            }),
-                        child: Text(signup
-                            ? 'Already have an account? Sign in'
-                            : 'New to WashPro? Create an account')),
-                    const SizedBox(height: 26),
-                    const Text(
-                        'By continuing you agree to Terms & Privacy Policy.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: muted, fontSize: 12)),
+                          padding: EdgeInsets.only(top: 18),
+                          child: Text(
+                              'Web sign-in uses Firebase reCAPTCHA for security.',
+                              textAlign: TextAlign.center,
+                              style:
+                                  TextStyle(color: muted, fontSize: 12))),
                   ]))));
 }
 
@@ -772,12 +1097,19 @@ class OnboardingPage extends StatefulWidget {
 class _OnboardingState extends State<OnboardingPage> {
   final name = TextEditingController(text: AppState.userName);
   final phoneC = TextEditingController(
-      text: AppState.userPhone.replaceAll('+91', '').replaceAll(' ', ''));
+      text: AppState.userPhone.replaceAll(RegExp(r'\D'), '').length >= 10
+          ? AppState.userPhone
+              .replaceAll(RegExp(r'\D'), '')
+              .substring(AppState.userPhone.replaceAll(RegExp(r'\D'), '').length - 10)
+          : '');
   final email = TextEditingController(text: AppState.userEmail);
   String err = '';
   bool saving = false;
 
-  bool get _phoneLogin => AppState.userPhone.isNotEmpty;
+  /// Verified Firebase phone login — number is locked to the Auth credential.
+  bool get _phoneLogin =>
+      AuthService.hasPhoneProvider ||
+      (FirebaseAuth.instance.currentUser?.phoneNumber?.isNotEmpty ?? false);
 
   Future<void> _save() async {
     final n = name.text.trim();
@@ -785,10 +1117,17 @@ class _OnboardingState extends State<OnboardingPage> {
       setState(() => err = 'Please enter your full name');
       return;
     }
-    final ph = phoneC.text.replaceAll(RegExp(r'[\s+]'), '');
-    if (ph.isNotEmpty && !RegExp(r'^(\+?91)?\d{10}$').hasMatch(ph)) {
-      setState(() => err = 'Enter a valid 10-digit mobile number');
-      return;
+    final authPhone = FirebaseAuth.instance.currentUser?.phoneNumber;
+    String phoneOut;
+    if (_phoneLogin && authPhone != null && authPhone.isNotEmpty) {
+      phoneOut = formatIndianDisplay(authPhone);
+    } else {
+      final e164 = phoneC.text.trim().isEmpty ? null : toIndianE164(phoneC.text);
+      if (phoneC.text.trim().isNotEmpty && e164 == null) {
+        setState(() => err = 'Enter a valid 10-digit mobile number');
+        return;
+      }
+      phoneOut = e164 == null ? '' : formatIndianDisplay(e164);
     }
     final em = email.text.trim();
     if (em.isNotEmpty && !RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(em)) {
@@ -801,7 +1140,7 @@ class _OnboardingState extends State<OnboardingPage> {
     });
     await WashProRepository.saveBasicDetails(
       name: n,
-      phone: ph.isEmpty ? '' : (ph.startsWith('+') ? ph : '+91 $ph'),
+      phone: phoneOut,
       email: em,
     );
     if (!mounted) return;
@@ -864,11 +1203,13 @@ class _OnboardingState extends State<OnboardingPage> {
                     const SizedBox(height: 12),
                     TextField(
                         controller: phoneC,
+                        enabled: !_phoneLogin,
+                        readOnly: _phoneLogin,
                         keyboardType: TextInputType.phone,
                         maxLength: 10,
                         decoration: InputDecoration(
                             labelText: _phoneLogin
-                                ? 'Mobile number (from your login)'
+                                ? 'Verified mobile (from login)'
                                 : 'Mobile number',
                             prefixText: '+91  ',
                             prefixIcon: const Icon(Icons.phone_outlined),
@@ -979,34 +1320,30 @@ class _ShellState extends State<Shell> {
       const ProfilePage()
     ];
     return Scaffold(
-        body: pages[tab],
-        bottomNavigationBar: Container(
-            decoration: const BoxDecoration(
-                color: Colors.white,
-                border: Border(top: BorderSide(color: line))),
-            child: NavigationBar(
-                backgroundColor: Colors.white,
-                indicatorColor: mint,
-                selectedIndex: tab,
-                onDestinationSelected: (i) => setState(() => tab = i),
-                destinations: const [
-                  NavigationDestination(
-                      icon: Icon(Icons.home_outlined),
-                      selectedIcon: Icon(Icons.home, color: dark),
-                      label: 'Home'),
-                  NavigationDestination(
-                      icon: Icon(Icons.calendar_month_outlined),
-                      selectedIcon: Icon(Icons.calendar_month, color: dark),
-                      label: 'Bookings'),
-                  NavigationDestination(
-                      icon: Icon(Icons.repeat_outlined),
-                      selectedIcon: Icon(Icons.repeat, color: dark),
-                      label: 'Plans'),
-                  NavigationDestination(
-                      icon: Icon(Icons.person_outline),
-                      selectedIcon: Icon(Icons.person, color: dark),
-                      label: 'Profile')
-                ])));
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
+        extendBody: true,
+        body: IndexedStack(index: tab, children: pages),
+        bottomNavigationBar: CurvedBottomNav(
+            index: tab,
+            onChanged: (i) => setState(() => tab = i),
+            items: const [
+              CurvedNavItem(
+                  icon: Icons.home_outlined,
+                  activeIcon: Icons.home_rounded,
+                  label: 'Home'),
+              CurvedNavItem(
+                  icon: Icons.calendar_month_outlined,
+                  activeIcon: Icons.calendar_month,
+                  label: 'Bookings'),
+              CurvedNavItem(
+                  icon: Icons.repeat_outlined,
+                  activeIcon: Icons.repeat,
+                  label: 'Plans'),
+              CurvedNavItem(
+                  icon: Icons.person_outline,
+                  activeIcon: Icons.person,
+                  label: 'Profile'),
+            ]));
   }
 }
 
@@ -1060,12 +1397,14 @@ class _HomeState extends State<HomePage> {
     final v = AppState.primaryVehicle;
     final addr = AppState.selectedAddress;
     final banner = AppState.banner;
+    final inkC = context.wpInk;
+    final mutedC = context.wpMuted;
     return SafeArea(
         child: RefreshIndicator(
             onRefresh: _load,
             color: green,
             child: ListView(
-                padding: const EdgeInsets.fromLTRB(20, 14, 20, 22),
+                padding: const EdgeInsets.fromLTRB(20, 14, 20, 110),
                 children: [
                   Row(children: [
                     Expanded(
@@ -1075,10 +1414,11 @@ class _HomeState extends State<HomePage> {
                           sectionLabel(_greeting),
                           const SizedBox(height: 3),
                           Text('Hi, ${AppState.firstName}',
-                              style: const TextStyle(
-                                  fontSize: 27,
+                              style: TextStyle(
+                                  fontSize: 26,
                                   fontWeight: FontWeight.w800,
-                                  letterSpacing: -.5))
+                                  letterSpacing: -.5,
+                                  color: inkC))
                         ])),
                     Stack(children: [
                       bellBtn(context),
@@ -1094,17 +1434,20 @@ class _HomeState extends State<HomePage> {
                                     shape: BoxShape.circle)))
                     ]),
                     const SizedBox(width: 10),
-                    CircleAvatar(
-                        radius: 22,
-                        backgroundColor: dark,
-                        child: Text(AppState.initials,
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w800,
-                                fontSize: 13)))
+                    GestureDetector(
+                        onTap: () => widget.go(3),
+                        child: CircleAvatar(
+                            radius: 22,
+                            backgroundColor: dark,
+                            child: Text(AppState.initials,
+                                style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 13))))
                   ]),
                   const SizedBox(height: 16),
                   wpCard(
+                      context: context,
                       p: const EdgeInsets.symmetric(
                           horizontal: 15, vertical: 13),
                       onTap: () async {
@@ -1115,30 +1458,38 @@ class _HomeState extends State<HomePage> {
                         if (mounted) setState(() {});
                       },
                       child: Row(children: [
-                        const Icon(Icons.location_on_outlined,
-                            color: green, size: 20),
+                        Icon(Icons.location_on_outlined,
+                            color: context.wpPrimary, size: 22),
                         const SizedBox(width: 9),
                         Expanded(
                             child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                              const Text('Service at',
-                                  style: TextStyle(color: muted, fontSize: 11)),
+                              Text('Service at',
+                                  style:
+                                      TextStyle(color: mutedC, fontSize: 11)),
                               Text(
                                   addr == null
                                       ? 'Add your service address'
-                                      : '${addr.label} · ${addr.line}',
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.w700,
-                                      fontSize: 13.5),
+                                      : addr.titleLine,
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      fontSize: 14,
+                                      color: inkC),
+                                  maxLines: 1,
                                   overflow: TextOverflow.ellipsis),
-                              if (addr != null)
-                                Text(addr.slot,
-                                    style: const TextStyle(
-                                        color: muted, fontSize: 11.5),
-                                    overflow: TextOverflow.ellipsis)
+                              Text(
+                                  addr == null
+                                      ? 'Tap to choose where we wash'
+                                      : (addr.line.trim().isNotEmpty
+                                          ? addr.line
+                                          : addr.shortArea),
+                                  style: TextStyle(
+                                      color: mutedC, fontSize: 12),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis)
                             ])),
-                        const Icon(Icons.chevron_right, color: muted)
+                        Icon(Icons.chevron_right, color: mutedC)
                       ])),
                   const SizedBox(height: 14),
                   if (banner.active)
@@ -1194,7 +1545,10 @@ class _HomeState extends State<HomePage> {
                                       children: [
                                         pill(banner.pill.toUpperCase()),
                                         const SizedBox(height: 13),
-                                        Text(banner.heading,
+                                        Text(
+                                            banner.heading.trim().isEmpty
+                                                ? 'Your car deserves a fresh start.'
+                                                : banner.heading,
                                             style: const TextStyle(
                                                 color: Colors.white,
                                                 fontSize: 25,
@@ -1208,7 +1562,10 @@ class _HomeState extends State<HomePage> {
                                                       offset: Offset(0, 2))
                                                 ])),
                                         const SizedBox(height: 6),
-                                        Text(banner.sub,
+                                        Text(
+                                            banner.sub.trim().isEmpty
+                                                ? 'Expert care, right where you park.'
+                                                : banner.sub,
                                             style: const TextStyle(
                                                 color: Colors.white70,
                                                 fontSize: 13.5)),
@@ -1232,21 +1589,19 @@ class _HomeState extends State<HomePage> {
                                                     padding: const EdgeInsets
                                                         .symmetric(
                                                         horizontal: 20)),
-                                                child: Row(
+                                                child: const Row(
                                                     mainAxisSize:
                                                         MainAxisSize.min,
                                                     children: [
-                                                      Text(banner.cta,
-                                                          style:
-                                                              const TextStyle(
-                                                                  fontWeight:
-                                                                      FontWeight
-                                                                          .w800,
-                                                                  color: dark2,
-                                                                  fontSize:
-                                                                      15)),
-                                                      const SizedBox(width: 7),
-                                                      const Icon(
+                                                      Text('Book a wash',
+                                                          style: TextStyle(
+                                                              fontWeight:
+                                                                  FontWeight
+                                                                      .w800,
+                                                              color: dark2,
+                                                              fontSize: 15)),
+                                                      SizedBox(width: 7),
+                                                      Icon(
                                                           Icons.arrow_forward,
                                                           size: 18,
                                                           color: dark2)
@@ -1271,13 +1626,17 @@ class _HomeState extends State<HomePage> {
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
-                                    const Text('Wash now',
+                                    const Text('Book a Wash',
                                         style: TextStyle(
                                             fontWeight: FontWeight.w800,
-                                            fontSize: 14.5)),
-                                    Text('Next slot · ${nextSlotLabel()}',
+                                            fontSize: 14.5),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis),
+                                    Text('Doorstep · ${nextSlotLabel()}',
                                         style: const TextStyle(
-                                            color: muted, fontSize: 11))
+                                            color: muted, fontSize: 11),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis)
                                   ])),
                               const Icon(Icons.chevron_right,
                                   color: muted, size: 19)
@@ -1295,16 +1654,20 @@ class _HomeState extends State<HomePage> {
                                       crossAxisAlignment:
                                           CrossAxisAlignment.start,
                                       children: [
-                                    const Text('Subscribe',
+                                    const Text('Subscriptions',
                                         style: TextStyle(
                                             fontWeight: FontWeight.w800,
-                                            fontSize: 14.5)),
+                                            fontSize: 14),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis),
                                     Text(
                                         AppState.maxPlanSave > 0
                                             ? 'Save up to ${AppState.maxPlanSave}%'
                                             : 'Monthly plans',
                                         style: const TextStyle(
-                                            color: muted, fontSize: 11))
+                                            color: muted, fontSize: 11),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis)
                                   ])),
                               const Icon(Icons.chevron_right,
                                   color: muted, size: 19)
@@ -1382,56 +1745,17 @@ class _HomeState extends State<HomePage> {
                               child: const Text('Book a wash'))
                         ]))
                   else
-                    wpCard(
-                        onTap: () => Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                                builder: (_) => BookingDetail(b: b))),
-                        child: Row(children: [
-                          Container(
-                              width: 56,
-                              padding: const EdgeInsets.symmetric(vertical: 9),
-                              decoration: BoxDecoration(
-                                  color: mint,
-                                  borderRadius: BorderRadius.circular(14)),
-                              child: Column(children: [
-                                Text('${b.when.day}',
-                                    style: const TextStyle(
-                                        fontSize: 21,
-                                        fontWeight: FontWeight.w800,
-                                        color: dark)),
-                                Text(months[b.when.month - 1].toUpperCase(),
-                                    style: const TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w800,
-                                        color: dark))
-                              ])),
-                          const SizedBox(width: 14),
-                          Expanded(
-                              child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                Row(children: [
-                                  statusPill(b.status),
-                                  const SizedBox(width: 8),
-                                  Text(b.time,
-                                      style: const TextStyle(
-                                          color: muted,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w600))
-                                ]),
-                                const SizedBox(height: 6),
-                                Text('${b.service.name} · ${b.vehicle.label}',
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.w700,
-                                        fontSize: 15)),
-                                Text('📍 ${b.addr.label} · ${b.addr.slot}',
-                                    style: const TextStyle(
-                                        color: muted, fontSize: 12.5),
-                                    overflow: TextOverflow.ellipsis)
-                              ])),
-                          const Icon(Icons.chevron_right, color: muted),
-                        ])),
+                    UpcomingBookingCard(
+                      booking: b,
+                      formatDate: fmtDate,
+                      formatMoney: inrFull,
+                      statusPill: statusPill,
+                      months: months,
+                      onOpen: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                              builder: (_) => BookingDetail(b: b))),
+                    ),
                   const SizedBox(height: 22),
                   Row(children: [
                     const Expanded(
@@ -1485,9 +1809,9 @@ class _HomeState extends State<HomePage> {
                         child: Container(
                             padding: const EdgeInsets.all(17),
                             decoration: BoxDecoration(
-                                color: Colors.white,
+                                color: context.wpCard,
                                 borderRadius: BorderRadius.circular(22),
-                                border: Border.all(color: line)),
+                                border: Border.all(color: context.wpLine)),
                             child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
@@ -1509,62 +1833,124 @@ class _HomeState extends State<HomePage> {
                                               left: 12,
                                               child: pill('PRIMARY', bg: mint)),
                                         const Center(
-                                            child: Text('🚙',
-                                                style: TextStyle(fontSize: 58)))
+                                            child: Icon(
+                                                Icons.directions_car_filled,
+                                                size: 54,
+                                                color: Colors.white70))
                                       ])),
                                   const SizedBox(height: 12),
-                                  Text('${v.make} ${v.model}',
-                                      style: const TextStyle(
+                                  Text(v.displayName,
+                                      style: TextStyle(
                                           fontWeight: FontWeight.w800,
-                                          fontSize: 16)),
+                                          fontSize: 16,
+                                          color: inkC)),
                                   Text(
-                                      '${v.reg} · ${v.color} · ${v.category.toUpperCase()}',
-                                      style: const TextStyle(
-                                          color: muted, fontSize: 12.5)),
+                                      [
+                                        if (v.reg.trim().isNotEmpty) v.reg,
+                                        v.seatingLabel,
+                                      ].join(' · '),
+                                      style: TextStyle(
+                                          color: mutedC, fontSize: 12.5)),
                                 ]))),
                   const SizedBox(height: 18),
-                  const Text('Our services',
-                      style:
-                          TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                  Text('Our services',
+                      style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: inkC)),
                   const SizedBox(height: 9),
-                  ...services.map((s) => Padding(
-                      padding: const EdgeInsets.only(bottom: 10),
-                      child: wpCard(
-                          onTap: () => Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                  builder: (_) =>
-                                      BookingFlow(serviceId: s.id))),
-                          child: Row(children: [
-                            mintIcon(s.icon),
-                            const SizedBox(width: 12),
-                            Expanded(
-                                child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                  Row(children: [
-                                    Text(s.name,
-                                        style: const TextStyle(
-                                            fontWeight: FontWeight.w800,
-                                            fontSize: 15)),
-                                    if (s.popular) ...[
-                                      const SizedBox(width: 7),
-                                      pill('POPULAR', bg: mint)
-                                    ]
-                                  ]),
-                                  Text(s.tag,
-                                      style: const TextStyle(
-                                          color: muted, fontSize: 12)),
-                                  Text(
-                                      '${inr(s.price(v?.category ?? 'hatchback'))} onwards · ${s.duration(v?.category ?? 'hatchback')}',
-                                      style: const TextStyle(
-                                          color: dark,
-                                          fontSize: 12,
-                                          fontWeight: FontWeight.w700))
-                                ])),
-                            const Icon(Icons.chevron_right, color: muted)
-                          ])))),
+                  ...services.map((s) {
+                    final cat = v?.pricingCategory ?? 'sedan';
+                    return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: wpCard(
+                            context: context,
+                            onTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                    builder: (_) =>
+                                        BookingFlow(serviceId: s.id))),
+                            child: Row(children: [
+                              mintIcon(s.icon),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                  child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                    Row(children: [
+                                      Text(s.name,
+                                          style: TextStyle(
+                                              fontWeight: FontWeight.w800,
+                                              fontSize: 15,
+                                              color: inkC)),
+                                      if (s.popular) ...[
+                                        const SizedBox(width: 7),
+                                        pill('POPULAR', bg: mint)
+                                      ]
+                                    ]),
+                                    Text(s.tag,
+                                        style: TextStyle(
+                                            color: mutedC, fontSize: 12)),
+                                    Text(
+                                        '${inr(s.price(cat))} onwards · ${s.duration(cat)}',
+                                        style: TextStyle(
+                                            color: context.wpPrimary,
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w700))
+                                  ])),
+                              Icon(Icons.chevron_right, color: mutedC)
+                            ])));
+                  }),
+                  const SizedBox(height: 18),
+                  Text('Offers & coupons',
+                      style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: inkC)),
+                  const SizedBox(height: 9),
+                  wpCard(
+                      context: context,
+                      child: Row(children: [
+                        mintIcon(Icons.local_offer_outlined),
+                        const SizedBox(width: 12),
+                        Expanded(
+                            child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                              Text('WELCOME75',
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      color: inkC)),
+                              Text('Save ₹75 on your first doorstep wash',
+                                  style: TextStyle(
+                                      color: mutedC, fontSize: 12.5)),
+                            ])),
+                      ])),
+                  const SizedBox(height: 18),
+                  Text('Why choose ZYLO',
+                      style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: inkC)),
+                  const SizedBox(height: 9),
+                  wpCard(
+                      context: context,
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _whyRow(Icons.home_work_outlined,
+                                'Doorstep convenience',
+                                'We wash where your car is parked.'),
+                            const SizedBox(height: 12),
+                            _whyRow(Icons.verified_outlined,
+                                'Trained experts',
+                                'Clear packages and careful finishing.'),
+                            const SizedBox(height: 12),
+                            _whyRow(Icons.lock_outline,
+                                'Secure payments',
+                                'Razorpay checkout with server verification.'),
+                          ])),
                 ])));
   }
 }
@@ -1586,10 +1972,11 @@ class _FlowState extends State<BookingFlow> {
   bool washNow = false;
   DateTime date = DateTime.now().add(const Duration(days: 1));
   String slot = '10:30 AM';
-  String pay = 'UPI';
+  String pay = 'ONLINE'; // ONLINE → Razorpay, CASH → cash after wash
   final selAddons = <String>{};
   bool showAddons = false;
   bool creating = false;
+  bool couponApplied = true;
   String svcQuery = '';
   String svcSort = 'rec'; // rec | low | high
   @override
@@ -1613,16 +2000,22 @@ class _FlowState extends State<BookingFlow> {
   }
 
   int get servicePaise =>
-      service.price(vehicle?.category ?? 'hatchback') +
+      service.price(vehicle?.pricingCategory ?? 'sedan') +
       addons.where((a) => selAddons.contains(a.$1)).fold(0, (n, a) => n + a.$3);
-  int get discount => 7500;
-  int get fee => 2900;
-  int get total => servicePaise + fee + (washNow ? 9900 : 0) - discount;
+  BookingPrice get price => BookingPrice.compute(
+        servicePaise: servicePaise,
+        washNow: washNow,
+        couponApplied: couponApplied,
+      );
+  int get discount => price.discountPaise;
+  int get fee => price.serviceFeePaise;
+  int get express => price.expressFeePaiseApplied;
+  int get total => price.totalPaise;
+  /// Exactly 3 booking steps: vehicle+service → schedule+location → review & pay.
   static const titles = [
-    ('Select your car', 'Step 1 of 4'),
-    ('Select a service', 'Step 2 of 4'),
-    ('Schedule your wash', 'Step 3 of 4'),
-    ('Review & pay', 'Step 4 of 4')
+    ('Vehicle & service', 'Step 1 of 3'),
+    ('Schedule & location', 'Step 2 of 3'),
+    ('Review & pay', 'Step 3 of 3')
   ];
   @override
   Widget build(BuildContext context) {
@@ -1630,7 +2023,7 @@ class _FlowState extends State<BookingFlow> {
         addr != null &&
         addr!.areaId != 'banjara' &&
         addr!.areaId != 'jubilee';
-    final cat = vehicle?.category ?? 'hatchback';
+    final cat = vehicle?.pricingCategory ?? 'sedan';
     final visibleServices = services
         .where((s) =>
             svcQuery.trim().isEmpty ||
@@ -1667,7 +2060,7 @@ class _FlowState extends State<BookingFlow> {
           child: ClipRRect(
               borderRadius: BorderRadius.circular(99),
               child: LinearProgressIndicator(
-                  value: (step + 1) / 4,
+                  value: (step + 1) / 3,
                   minHeight: 4,
                   backgroundColor: line,
                   color: green))),
@@ -1716,16 +2109,22 @@ class _FlowState extends State<BookingFlow> {
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                               Row(children: [
-                                Text('${v.make} ${v.model}',
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 15.5)),
+                                Flexible(
+                                    child: Text(v.displayName,
+                                        style: const TextStyle(
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 15.5),
+                                        overflow: TextOverflow.ellipsis)),
                                 if (v.isDefault) ...[
                                   const SizedBox(width: 7),
                                   pill('PRIMARY')
                                 ]
                               ]),
-                              Text('${v.reg} · ${v.color} · ${v.category}',
+                              Text(
+                                  [
+                                    if (v.reg.trim().isNotEmpty) v.reg,
+                                    v.seatingLabel,
+                                  ].join(' · '),
                                   style: const TextStyle(
                                       color: muted, fontSize: 12.5))
                             ])),
@@ -1753,8 +2152,7 @@ class _FlowState extends State<BookingFlow> {
                             style: TextStyle(
                                 fontWeight: FontWeight.w700, color: dark))
                       ]))),
-            ],
-            if (step == 1) ...[
+              const SizedBox(height: 22),
               const Text('What does your car need?',
                   style: TextStyle(
                       fontSize: 23,
@@ -1775,21 +2173,25 @@ class _FlowState extends State<BookingFlow> {
                           borderRadius: BorderRadius.circular(14),
                           borderSide: const BorderSide(color: line)))),
               const SizedBox(height: 10),
-              Row(children: [
-                const Text('Sort:',
-                    style: TextStyle(color: muted, fontSize: 12.5)),
-                const SizedBox(width: 8),
-                ...[
-                  ('rec', 'Recommended'),
-                  ('low', 'Price: low → high'),
-                  ('high', 'Price: high → low')
-                ].map((o) => Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: ChoiceChip(
-                        label: Text(o.$2, style: const TextStyle(fontSize: 11.5)),
-                        selected: svcSort == o.$1,
-                        onSelected: (_) => setState(() => svcSort = o.$1)))),
-              ]),
+              SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: [
+                    const Text('Sort:',
+                        style: TextStyle(color: muted, fontSize: 12.5)),
+                    const SizedBox(width: 8),
+                    ...[
+                      ('rec', 'Recommended'),
+                      ('low', 'Price: low → high'),
+                      ('high', 'Price: high → low')
+                    ].map((o) => Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: ChoiceChip(
+                            label: Text(o.$2,
+                                style: const TextStyle(fontSize: 11.5)),
+                            selected: svcSort == o.$1,
+                            onSelected: (_) =>
+                                setState(() => svcSort = o.$1)))),
+                  ])),
               const SizedBox(height: 12),
               if (visibleServices.isEmpty)
                 wpCard(
@@ -1827,13 +2229,12 @@ class _FlowState extends State<BookingFlow> {
                                       const SizedBox(width: 4),
                                       Text(
                                           s.duration(
-                                              vehicle?.category ?? 'hatchback'),
+                                              vehicle?.pricingCategory ?? 'sedan'),
                                           style: const TextStyle(
                                               color: muted, fontSize: 12.5)),
                                       const Spacer(),
                                       Text(
-                                          inr(s.price(vehicle?.category ??
-                                              'hatchback')),
+                                          inr(s.price(vehicle?.pricingCategory ?? 'sedan')),
                                           style: const TextStyle(
                                               fontWeight: FontWeight.w800,
                                               fontSize: 16)),
@@ -1886,7 +2287,7 @@ class _FlowState extends State<BookingFlow> {
                     title: Text(a.$2),
                     secondary: Text('+${inr(a.$3)}'))),
             ],
-            if (step == 2) ...[
+            if (step == 1) ...[
               sectionLabel('PICK A TIME'),
               const SizedBox(height: 6),
               const Text('When should we arrive?',
@@ -2133,12 +2534,12 @@ class _FlowState extends State<BookingFlow> {
                                   color: dark,
                                   fontSize: 13.5)),
                           Text(
-                              "We'll notify you when your WashPro expert is on the way.",
+                              "We'll notify you when your Zylo expert is on the way.",
                               style: TextStyle(color: dark, fontSize: 12))
                         ]))
                   ])),
             ],
-            if (step == 3) ...[
+            if (step == 2) ...[
               wpCard(
                   child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -2168,105 +2569,197 @@ class _FlowState extends State<BookingFlow> {
                         washNow
                             ? 'Today · ASAP (+₹99)'
                             : '${fmtDate(date)} · $slot',
-                        () => setState(() => step = 2)),
+                        () => setState(() => step = 1)),
                     const SizedBox(height: 13),
                     _reviewRow(
                         Icons.location_on_outlined,
                         'SERVICE AT',
                         '${addr?.label ?? ''} · ${addr?.slot ?? ''}\n${addr?.line ?? ''}',
-                        () => setState(() => step = 2)),
-                  ])),
-              const SizedBox(height: 12),
-              Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                      color: mint, borderRadius: BorderRadius.circular(18)),
-                  child: Row(children: [
-                    mintIcon(Icons.auto_awesome),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                        child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                          Text('WELCOME75 applied',
-                              style: TextStyle(
-                                  fontWeight: FontWeight.w800, color: dark)),
-                          Text('You saved ₹75 on this booking',
-                              style: TextStyle(color: dark, fontSize: 12.5))
-                        ])),
-                    const Icon(Icons.check, color: dark)
+                        () => setState(() => step = 1)),
                   ])),
               const SizedBox(height: 12),
               wpCard(
+                  context: context,
                   child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                    const Text('Price details',
+                    Text('Offers & coupons',
                         style: TextStyle(
-                            fontWeight: FontWeight.w800, fontSize: 15.5)),
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15.5,
+                            color: context.wpInk)),
+                    const SizedBox(height: 10),
+                    if (couponApplied)
+                      Container(
+                          padding: const EdgeInsets.all(14),
+                          decoration: BoxDecoration(
+                              color: context.wpMint,
+                              borderRadius: BorderRadius.circular(16)),
+                          child: Row(children: [
+                            Icon(Icons.local_offer_outlined,
+                                color: context.wpPrimary),
+                            const SizedBox(width: 10),
+                            Expanded(
+                                child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                  Text(
+                                      '${BookingPrice.welcomeCouponCode} applied',
+                                      style: TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                          color: context.wpInk)),
+                                  Text(
+                                      'You save ${inrFull(discount)} on this booking',
+                                      style: TextStyle(
+                                          color: context.wpMuted,
+                                          fontSize: 12.5))
+                                ])),
+                            TextButton(
+                                onPressed: () =>
+                                    setState(() => couponApplied = false),
+                                child: Text('Remove',
+                                    style: TextStyle(
+                                        color: context.wpPrimary,
+                                        fontWeight: FontWeight.w800)))
+                          ]))
+                    else
+                      OutlinedButton.icon(
+                          onPressed: () =>
+                              setState(() => couponApplied = true),
+                          icon: const Icon(Icons.add_rounded, size: 18),
+                          label: Text(
+                              'Apply ${BookingPrice.welcomeCouponCode}')),
+                  ])),
+              const SizedBox(height: 12),
+              wpCard(
+                  context: context,
+                  child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                    Text('Price breakdown',
+                        style: TextStyle(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 15.5,
+                            color: context.wpInk)),
                     const SizedBox(height: 10),
                     _kv(service.name, inrFull(servicePaise)),
                     _kv('Service fee', inrFull(fee)),
-                    if (washNow) _kv('Wash now express', '₹99'),
-                    _kv('Introductory discount', '-₹75', color: green),
-                    const Divider(height: 22, color: line),
+                    if (express > 0)
+                      _kv('Express service', inrFull(express)),
+                    if (discount > 0)
+                      _kv('Discount', '-${inrFull(discount)}', color: green),
+                    _kv('Taxes', '₹0'),
+                    Divider(height: 22, color: context.wpLine),
                     Row(children: [
+                      Expanded(
+                          child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                            Text('Total payable',
+                                style: TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 15,
+                                    color: context.wpInk)),
+                            Text(
+                                'Charged exactly as ${inrFull(total)} on Razorpay',
+                                style: TextStyle(
+                                    color: context.wpMuted, fontSize: 11))
+                          ])),
+                      Text(inrFull(total),
+                          style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 18,
+                              color: context.wpInk))
+                    ])
+                  ])),
+              const SizedBox(height: 14),
+              Text('Payment',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w800,
+                      fontSize: 15.5,
+                      color: context.wpInk)),
+              const SizedBox(height: 8),
+              Text(
+                  'Continue to payment opens Razorpay Checkout (UPI + Cards). No extra payment screen.',
+                  style: TextStyle(color: context.wpMuted, fontSize: 12.5)),
+              const SizedBox(height: 12),
+              wpCard(
+                  context: context,
+                  selected: pay != 'CASH',
+                  onTap: () => setState(() => pay = 'ONLINE'),
+                  p: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
+                  child: Row(children: [
+                    mintIcon(Icons.lock_outline),
+                    const SizedBox(width: 12),
+                    Expanded(
+                        child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                          Text('Online payment · Razorpay',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  fontSize: 13.5,
+                                  color: context.wpInk)),
+                          Text(
+                              'UPI + Cards via Razorpay · Intent/QR need Live Mode',
+                              style: TextStyle(
+                                  color: context.wpMuted, fontSize: 11.5))
+                        ])),
+                    checkCircle(pay != 'CASH')
+                  ])),
+              if (cashOk) ...[
+                const SizedBox(height: 12),
+                wpCard(
+                    selected: pay == 'CASH',
+                    onTap: () => setState(() => pay = 'CASH'),
+                    p: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
+                    child: Row(children: [
+                      mintIcon(Icons.payments_outlined),
+                      const SizedBox(width: 12),
                       const Expanded(
                           child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                            Text('Amount to pay',
+                            Text('Cash after wash',
                                 style: TextStyle(
-                                    fontWeight: FontWeight.w800, fontSize: 15)),
-                            Text('Inclusive of applicable taxes',
-                                style: TextStyle(color: muted, fontSize: 11))
+                                    fontWeight: FontWeight.w800,
+                                    fontSize: 13.5)),
+                            Text('Pay the expert when the service is done',
+                                style: TextStyle(color: muted, fontSize: 11.5))
                           ])),
-                      Text(inrFull(total),
-                          style: const TextStyle(
-                              fontWeight: FontWeight.w800, fontSize: 17))
-                    ])
-                  ])),
-              const SizedBox(height: 14),
-              Row(children: [
-                const Text('Pay securely with',
-                    style:
-                        TextStyle(fontWeight: FontWeight.w800, fontSize: 15.5)),
-                const Spacer(),
-                const Icon(Icons.verified_user, color: green, size: 19)
-              ]),
-              const SizedBox(height: 10),
-              _payTile('UPI', 'Google Pay, PhonePe or any UPI app', 'UPI',
-                  Icons.account_balance_wallet_outlined),
-              _payTile('CARD', 'Credit / Debit Card · Visa, Mastercard, RuPay',
-                  'CARD', Icons.credit_card),
-              _payTile(
-                  'CASH',
-                  cashOk
-                      ? 'Pay cash to the expert after the wash'
-                      : 'Not available for this service/area',
-                  'CASH',
-                  Icons.payments_outlined,
-                  enabled: cashOk),
+                      checkCircle(pay == 'CASH')
+                    ])),
+                if (pay == 'CASH')
+                  Padding(
+                      padding: const EdgeInsets.only(top: 8),
+                      child: TextButton(
+                          onPressed: () => setState(() => pay = 'UPI'),
+                          child: const Text('Use UPI / Cards instead',
+                              style: TextStyle(
+                                  color: green, fontWeight: FontWeight.w700)))),
+              ],
             ],
           ])),
       Container(
           padding: const EdgeInsets.fromLTRB(20, 10, 20, 16),
-          decoration: const BoxDecoration(
-              color: Colors.white,
-              border: Border(top: BorderSide(color: line))),
+          decoration: BoxDecoration(
+              color: Theme.of(context).cardColor,
+              border: Border(
+                  top: BorderSide(color: Theme.of(context).dividerColor))),
           child: Row(children: [
-            if (step == 1)
+            if (step == 0)
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 const Text('Starts at',
                     style: TextStyle(color: muted, fontSize: 11.5)),
-                Text(inr(service.price(vehicle?.category ?? 'hatchback')),
+                Text(inr(service.price(vehicle?.pricingCategory ?? 'sedan')),
                     style: const TextStyle(
                         fontWeight: FontWeight.w800, fontSize: 19))
               ]),
-            if (step == 3)
+            if (step == 2)
               Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Text('Total',
-                    style: TextStyle(color: muted, fontSize: 11.5)),
+                Text(pay == 'CASH' ? 'Pay after wash' : 'Total payable',
+                    style: const TextStyle(color: muted, fontSize: 11.5)),
                 Text(inrFull(total),
                     style: const TextStyle(
                         fontWeight: FontWeight.w800, fontSize: 19))
@@ -2274,7 +2767,7 @@ class _FlowState extends State<BookingFlow> {
             const Spacer(),
             if (step > 0) ...[
               OutlinedButton(
-                  onPressed: () => setState(() => step--),
+                  onPressed: creating ? null : () => setState(() => step--),
                   style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(
                           horizontal: 18, vertical: 15),
@@ -2286,7 +2779,7 @@ class _FlowState extends State<BookingFlow> {
             SizedBox(
                 height: 52,
                 child: FilledButton(
-                    onPressed: _next,
+                    onPressed: creating ? null : _next,
                     style: FilledButton.styleFrom(
                         backgroundColor: dark,
                         shape: RoundedRectangleBorder(
@@ -2296,19 +2789,19 @@ class _FlowState extends State<BookingFlow> {
                       Text(
                           creating
                               ? 'Please wait…'
-                              : step == 2
+                              : step == 1
                                   ? 'Review booking'
-                                  : step == 3
+                                  : step == 2
                                       ? (pay == 'CASH'
                                           ? 'Confirm booking'
-                                          : 'Continue')
+                                          : 'Continue to payment')
                                       : 'Continue',
                           style: const TextStyle(
                               fontWeight: FontWeight.w800, fontSize: 15)),
                       const SizedBox(width: 7),
                       Icon(
-                          step == 3 && pay != 'CASH'
-                              ? Icons.verified_user
+                          step == 2 && pay != 'CASH'
+                              ? Icons.lock_outline
                               : Icons.arrow_forward,
                           size: 18)
                     ]))),
@@ -2349,71 +2842,66 @@ class _FlowState extends State<BookingFlow> {
             child: const Text('Edit',
                 style: TextStyle(color: green, fontWeight: FontWeight.w700)))
       ]);
-  Widget _payTile(String title, String sub, String value, IconData icon,
-          {bool enabled = true}) =>
-      Padding(
-          padding: const EdgeInsets.only(bottom: 10),
-          child: wpCard(
-              selected: pay == value,
-              p: const EdgeInsets.symmetric(horizontal: 15, vertical: 13),
-              onTap: enabled ? () => setState(() => pay = value) : null,
-              child: Row(children: [
-                Container(
-                    width: 42,
-                    height: 32,
-                    decoration: BoxDecoration(
-                        color: mintBg, borderRadius: BorderRadius.circular(8)),
-                    child: Icon(icon, size: 18, color: dark)),
-                const SizedBox(width: 12),
-                Expanded(
-                    child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                      Text(title,
-                          style: TextStyle(
-                              fontWeight: FontWeight.w800,
-                              fontSize: 13.5,
-                              color: enabled ? ink : const Color(0xFFB7C6BC))),
-                      Text(sub,
-                          style: const TextStyle(color: muted, fontSize: 11.5))
-                    ])),
-                checkCircle(pay == value && enabled)
-              ])));
   Future<void> _next() async {
     if (creating) return; // double-tap / retry guard
     if (step == 0 && vehicle == null) {
-      toast(context, 'Add and select your car first');
-      return;
+      if (!isSignedIn) {
+        final ok = await requireLogin(context,
+            message: 'Sign in to add your car and book');
+        if (!ok || !mounted) return;
+        setState(() => vehicle = AppState.primaryVehicle);
+      }
+      if (vehicle == null) {
+        toast(context, 'Add and select your car first');
+        return;
+      }
     }
-    if (step == 2 && addr == null) {
-      toast(context, 'Add and select a service address first');
-      return;
+    if (step == 1 && addr == null) {
+      if (!isSignedIn) {
+        final ok = await requireLogin(context,
+            message: 'Sign in to add a service address');
+        if (!ok || !mounted) return;
+        setState(() => addr = AppState.selectedAddress);
+      }
+      if (addr == null) {
+        toast(context, 'Add and select a service address first');
+        return;
+      }
     }
-    if (step < 3) {
+    if (step < 2) {
       setState(() => step++);
       return;
     }
+    // Confirm booking always requires a signed-in account.
+    if (!isSignedIn) {
+      final ok = await requireLogin(context,
+          message: 'Sign in to confirm your booking');
+      if (!ok || !mounted) return;
+    }
+
+    // Direct Razorpay — no intermediate Payment Options page.
     setState(() => creating = true);
     final when =
         washNow ? DateTime.now() : DateTime(date.year, date.month, date.day);
+    final payMethod = pay == 'CASH' ? 'CASH' : 'ONLINE';
     final b = Booking(
         AppState.nextId(),
         service,
         vehicle!,
         addr!,
-        pay == 'CASH' ? 'confirmed' : 'awaiting_payment',
+        payMethod == 'CASH' ? 'confirmed' : 'awaiting_payment',
         when,
         washNow ? 'ASAP' : slot,
         total,
         servicePaise,
-        pay,
+        payMethod,
         'pending',
         washNow ? 'instant' : 'scheduled');
     AppState.bookings.insert(0, b);
     await WashProRepository.saveBooking(b);
     if (!mounted) return;
     setState(() => creating = false);
-    if (pay == 'CASH') {
+    if (payMethod == 'CASH') {
       _success(b);
       return;
     }
@@ -2425,14 +2913,17 @@ class _FlowState extends State<BookingFlow> {
   /// Function) — the app never marks anything paid on its own say-so. If the
   /// gateway is not live yet (Functions/keys pending), the user can switch
   /// to cash or keep the booking and pay later from Booking details.
-  Future<void> _payOnline(Booking b, int total) async {
+  Future<void> _payOnline(Booking b, int total,
+      {String? preferredMethod}) async {
     try {
       toast(context, 'Opening secure Razorpay checkout…');
       final r = await RazorpayService.payBooking(
           bookingId: b.id,
           name: AppState.userName,
           email: AppState.userEmail,
-          phone: AppState.userPhone);
+          phone: AppState.userPhone,
+          expectedAmountPaise: b.totalPaise,
+          preferredMethod: preferredMethod);
       b.payStatus = 'paid';
       b.status = 'confirmed';
       b.providerRef = r.paymentId;
@@ -2499,12 +2990,12 @@ class SuccessPage extends StatelessWidget {
   Widget build(BuildContext context) => Scaffold(
       backgroundColor: dark2,
       body: SafeArea(
-          child: Padding(
+          child: SingleChildScrollView(
               padding: const EdgeInsets.all(24),
               child: Column(children: [
-                const SizedBox(height: 18),
+                const SizedBox(height: 12),
                 logoRow(light: true),
-                const SizedBox(height: 38),
+                const SizedBox(height: 28),
                 Container(
                     width: 88,
                     height: 88,
@@ -2523,6 +3014,7 @@ class SuccessPage extends StatelessWidget {
                     b.status == 'awaiting_payment'
                         ? 'Booking received.'
                         : "You're all set.",
+                    textAlign: TextAlign.center,
                     style: const TextStyle(
                         color: Colors.white,
                         fontSize: 29,
@@ -2550,10 +3042,14 @@ class SuccessPage extends StatelessWidget {
                                     fontSize: 10.5,
                                     fontWeight: FontWeight.w800,
                                     letterSpacing: .8)),
-                            const Spacer(),
-                            Text(b.id,
-                                style: const TextStyle(
-                                    color: green, fontWeight: FontWeight.w800))
+                            const SizedBox(width: 12),
+                            Expanded(
+                                child: Text(b.id,
+                                    textAlign: TextAlign.right,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(
+                                        color: green,
+                                        fontWeight: FontWeight.w800)))
                           ]),
                           const Divider(height: 24, color: line),
                           _sr(Icons.calendar_month_outlined,
@@ -2571,17 +3067,18 @@ class SuccessPage extends StatelessWidget {
                                   color: mint,
                                   borderRadius: BorderRadius.circular(12)),
                               child: Row(children: [
-                                Text(
-                                    b.payStatus == 'paid'
-                                        ? 'PAID'
-                                        : b.payMethod == 'CASH'
-                                            ? 'PAY AFTER WASH'
-                                            : 'PAYMENT PENDING',
-                                    style: const TextStyle(
-                                        color: dark,
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 12)),
-                                const Spacer(),
+                                Flexible(
+                                    child: Text(
+                                        b.payStatus == 'paid'
+                                            ? 'PAID'
+                                            : b.payMethod == 'CASH'
+                                                ? 'PAY AFTER WASH'
+                                                : 'PAYMENT PENDING',
+                                        style: const TextStyle(
+                                            color: dark,
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 12))),
+                                const SizedBox(width: 8),
                                 Text(
                                     '${b.payMethod} · ${inrFull(b.totalPaise)}',
                                     style: const TextStyle(
@@ -2626,7 +3123,7 @@ class SuccessPage extends StatelessWidget {
                     onPressed: () => toast(context, 'Support chat opening…'),
                     icon: const Icon(Icons.headset_mic_outlined,
                         color: Colors.white54, size: 18),
-                    label: const Text('Need help? Chat with WashPro support',
+                    label: const Text('Need help? Chat with Zylo support',
                         style:
                             TextStyle(color: Colors.white54, fontSize: 12.5))),
               ]))));
@@ -2634,9 +3131,10 @@ class SuccessPage extends StatelessWidget {
       Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Icon(i, color: green, size: 20),
         const SizedBox(width: 11),
-        Text(t,
-            style: const TextStyle(
-                fontSize: 13, height: 1.4, fontWeight: FontWeight.w500))
+        Expanded(
+            child: Text(t,
+                style: const TextStyle(
+                    fontSize: 13, height: 1.4, fontWeight: FontWeight.w500)))
       ]);
 }
 
@@ -2884,7 +3382,7 @@ class _DetailState extends State<BookingDetail> {
   Widget build(BuildContext context) {
     final idx = flow.indexOf(b.status);
     return Scaffold(
-        backgroundColor: mintBg,
+        backgroundColor: Theme.of(context).scaffoldBackgroundColor,
         body: SafeArea(
             child: ListView(
                 padding: const EdgeInsets.fromLTRB(20, 10, 20, 22),
@@ -2979,7 +3477,7 @@ class _DetailState extends State<BookingDetail> {
                         Text(b.worker!,
                             style:
                                 const TextStyle(fontWeight: FontWeight.w800)),
-                        const Text('Verified WashPro expert',
+                        const Text('Verified Zylo expert',
                             style: TextStyle(color: muted, fontSize: 12))
                       ])),
                   IconButton(
@@ -3045,13 +3543,26 @@ class _DetailState extends State<BookingDetail> {
                       onTap: myRating == 0
                           ? null
                           : () async {
-                              await WashProRepository.patchBooking(b.id,
-                                  {'status': 'completed', 'rating': myRating});
-                              setState(() {
-                                b.status = 'completed';
-                                b.rating = myRating;
+                              try {
+                                await WashProRepository.verifyCompletion(b.id,
+                                    rating: myRating);
+                                if (!mounted) return;
+                                setState(() {
+                                  b.status = 'completed';
+                                  b.rating = myRating;
+                                });
                                 toast(context, 'Thanks! Service verified ✓');
-                              });
+                              } on FirebaseFunctionsException catch (e) {
+                                if (!mounted) return;
+                                toast(
+                                    context,
+                                    e.message ??
+                                        'Could not verify completion. Try again.');
+                              } catch (_) {
+                                if (!mounted) return;
+                                toast(context,
+                                    'Could not verify completion. Try again.');
+                              }
                             })
                 ]))
               ],
@@ -3075,19 +3586,36 @@ class _DetailState extends State<BookingDetail> {
                     icon: Icons.lock_outline,
                     onTap: () async {
                       try {
+                        // After app kill mid-checkout, reconcile with server first.
+                        try {
+                          final st = await RazorpayService.getStatus(b.id);
+                          if (st['paymentStatus'] == 'paid' ||
+                              st['bookingStatus'] == 'confirmed') {
+                            if (!mounted) return;
+                            setState(() {
+                              b.payStatus = 'paid';
+                              b.status = 'confirmed';
+                            });
+                            toast(context, 'Payment already confirmed ✓');
+                            return;
+                          }
+                        } catch (_) {}
                         final r = await RazorpayService.payBooking(
                             bookingId: b.id,
                             name: AppState.userName,
                             email: AppState.userEmail,
-                            phone: AppState.userPhone);
+                            phone: AppState.userPhone,
+                            expectedAmountPaise: b.totalPaise);
+                        if (!mounted) return;
                         setState(() {
                           b.payStatus = 'paid';
                           b.status = 'confirmed';
+                          b.payMethod = 'ONLINE';
                           b.providerRef = r.paymentId;
                         });
                         toast(context, 'Payment successful ✓');
                       } on PaymentUnavailable catch (e) {
-                        toast(context, e.message);
+                        if (mounted) toast(context, e.message);
                       }
                     }),
               ],
@@ -3246,22 +3774,25 @@ class _PlansState extends State<PlansPage> {
                         .toList())),
             const SizedBox(height: 16),
             if (tab == 'explore') ...[
-              Row(children: [
-                const Text('Sort:',
-                    style: TextStyle(color: muted, fontSize: 12.5)),
-                const SizedBox(width: 8),
-                ...[
-                  ('save', 'Best saving'),
-                  ('low', 'Price: low → high'),
-                  ('visits', 'Most visits')
-                ].map((o) => Padding(
-                    padding: const EdgeInsets.only(right: 6),
-                    child: ChoiceChip(
-                        label:
-                            Text(o.$2, style: const TextStyle(fontSize: 11.5)),
-                        selected: planSort == o.$1,
-                        onSelected: (_) => setState(() => planSort = o.$1)))),
-              ]),
+              SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(children: [
+                    const Text('Sort:',
+                        style: TextStyle(color: muted, fontSize: 12.5)),
+                    const SizedBox(width: 8),
+                    ...[
+                      ('save', 'Best saving'),
+                      ('low', 'Price: low → high'),
+                      ('visits', 'Most visits')
+                    ].map((o) => Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: ChoiceChip(
+                            label: Text(o.$2,
+                                style: const TextStyle(fontSize: 11.5)),
+                            selected: planSort == o.$1,
+                            onSelected: (_) =>
+                                setState(() => planSort = o.$1)))),
+                  ])),
               const SizedBox(height: 12),
               ...sortedPlans.map((p) {
                 final sel = selected == p;
@@ -3781,7 +4312,7 @@ class _SettingsState extends State<SettingsPage> {
               const Divider(height: 1, indent: 70, color: line),
               const ListTile(
                   leading: Icon(Icons.info_outline, color: muted),
-                  title: Text('WashPro for Android',
+                  title: Text('Zylo for Android',
                       style: TextStyle(
                           fontWeight: FontWeight.w600, fontSize: 14.5)),
                   subtitle: Text('Version 1.2.0 · Hyderabad pilot',
@@ -3908,15 +4439,18 @@ class _ProfileState extends State<ProfilePage> {
             Row(children: [
               logoRow(),
               const SizedBox(width: 12),
-              const Expanded(
+              Expanded(
                   child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                    Text('Profile',
+                    const Text('Profile',
                         style: TextStyle(
                             fontSize: 17, fontWeight: FontWeight.w800)),
-                    Text('Your WashPro account',
-                        style: TextStyle(color: muted, fontSize: 12))
+                    Text(
+                        isSignedIn
+                            ? 'Your Zylo account'
+                            : 'Guest · explore services freely',
+                        style: const TextStyle(color: muted, fontSize: 12))
                   ])),
               bellBtn(context)
             ]),
@@ -3935,7 +4469,12 @@ class _ProfileState extends State<ProfilePage> {
                           color: bright,
                           borderRadius: BorderRadius.circular(15)),
                       child: Center(
-                          child: Text(AppState.initials,
+                          child: Text(
+                              isSignedIn
+                                  ? (AppState.initials.isEmpty
+                                      ? 'Z'
+                                      : AppState.initials)
+                                  : '?',
                               style: const TextStyle(
                                   color: dark2,
                                   fontWeight: FontWeight.w800,
@@ -3946,32 +4485,39 @@ class _ProfileState extends State<ProfilePage> {
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                         Text(
-                            AppState.userName.isEmpty
-                                ? 'WashPro customer'
-                                : AppState.userName,
+                            !isSignedIn
+                                ? 'Browsing as guest'
+                                : (AppState.userName.isEmpty
+                                    ? 'Zylo customer'
+                                    : AppState.userName),
                             style: const TextStyle(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w800,
                                 fontSize: 17)),
                         Text(
-                            AppState.userPhone.isNotEmpty
-                                ? AppState.userPhone
-                                : AppState.userEmail,
+                            !isSignedIn
+                                ? 'Sign in to book and save details'
+                                : (AppState.userPhone.isNotEmpty
+                                    ? AppState.userPhone
+                                    : AppState.userEmail),
                             style: const TextStyle(
                                 color: Colors.white60, fontSize: 12.5)),
                         const SizedBox(height: 7),
-                        pill(AppState.memberSince == null
-                            ? 'MEMBER'
-                            : 'MEMBER SINCE ${AppState.memberSince!.year}')
+                        pill(!isSignedIn
+                            ? 'GUEST'
+                            : (AppState.memberSince == null
+                                ? 'MEMBER'
+                                : 'MEMBER SINCE ${AppState.memberSince!.year}'))
                       ])),
-                  Container(
-                      decoration: BoxDecoration(
-                          color: Colors.white12,
-                          borderRadius: BorderRadius.circular(11)),
-                      child: IconButton(
-                          icon: const Icon(Icons.edit_outlined,
-                              color: Colors.white, size: 19),
-                          onPressed: _editProfile)),
+                  if (isSignedIn)
+                    Container(
+                        decoration: BoxDecoration(
+                            color: Colors.white12,
+                            borderRadius: BorderRadius.circular(11)),
+                        child: IconButton(
+                            icon: const Icon(Icons.edit_outlined,
+                                color: Colors.white, size: 19),
+                            onPressed: _editProfile)),
                 ])),
             const SizedBox(height: 16),
             wpCard(
@@ -3994,6 +4540,12 @@ class _ProfileState extends State<ProfilePage> {
             const SizedBox(height: 14),
             GestureDetector(
                 onTap: () async {
+                  if (!isSignedIn) {
+                    final ok = await requireLogin(context,
+                        message: 'Sign in to save your profile');
+                    if (ok && context.mounted) setState(() {});
+                    return;
+                  }
                   await AuthService.signOut();
                   if (context.mounted)
                     Navigator.pushAndRemoveUntil(
@@ -4007,12 +4559,13 @@ class _ProfileState extends State<ProfilePage> {
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(16),
                         border: Border.all(color: line)),
-                    child: const Text('Log out',
+                    child: Text(isSignedIn ? 'Log out' : 'Sign in',
                         textAlign: TextAlign.center,
-                        style: TextStyle(
+                        style: const TextStyle(
                             color: green,
                             fontWeight: FontWeight.w700,
                             fontSize: 15)))),
+            if (isSignedIn)
             TextButton(
                 onPressed: () => showDialog(
                     context: context,
@@ -4060,18 +4613,20 @@ class SubPage extends StatelessWidget {
   final Widget child;
   @override
   Widget build(BuildContext context) => Scaffold(
-      backgroundColor: mintBg,
+      backgroundColor: Theme.of(context).scaffoldBackgroundColor,
       body: SafeArea(
           child: ListView(
-              padding: const EdgeInsets.fromLTRB(20, 10, 20, 22),
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 28),
               children: [
             Row(children: [
               backBtn(context),
               const SizedBox(width: 12),
-              Text(title,
-                  style: const TextStyle(
-                      fontSize: 17, fontWeight: FontWeight.w800)),
-              const Spacer(),
+              Expanded(
+                  child: Text(title,
+                      style: TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: context.wpInk))),
               bellBtn(context)
             ]),
             const SizedBox(height: 16),
@@ -4097,91 +4652,104 @@ class _VehiclesState extends State<VehiclesPage> {
           }),
         if (AppState.vehicles.isEmpty)
           wpCard(
+              context: context,
               p: const EdgeInsets.all(22),
-              child: const Column(children: [
-                Text('🚙', style: TextStyle(fontSize: 30)),
-                SizedBox(height: 8),
+              child: Column(children: [
+                Icon(Icons.directions_car_outlined,
+                    size: 34, color: context.wpPrimary),
+                const SizedBox(height: 8),
                 Text('No vehicles yet',
-                    style: TextStyle(fontWeight: FontWeight.w800)),
-                Text('Add your car to see vehicle-specific pricing.',
-                    style: TextStyle(color: muted, fontSize: 12.5))
+                    style: TextStyle(
+                        fontWeight: FontWeight.w800, color: context.wpInk)),
+                Text('Add your car for seating-based pricing.',
+                    style: TextStyle(color: context.wpMuted, fontSize: 12.5))
               ])),
         ...AppState.vehicles.map((v) => Padding(
             padding: const EdgeInsets.only(bottom: 11),
             child: wpCard(
+                context: context,
+                selected: v.isDefault,
+                onTap: () async {
+                  await WashProRepository.setPrimaryVehicle(v.id);
+                  setState(() {});
+                },
                 child: Row(children: [
-              Container(
-                  width: 54,
-                  height: 46,
-                  decoration: BoxDecoration(
-                      color: mint, borderRadius: BorderRadius.circular(12)),
-                  child: const Center(
-                      child: Text('🚙', style: TextStyle(fontSize: 26)))),
-              const SizedBox(width: 12),
-              Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                    Row(children: [
-                      Text('${v.make} ${v.model}',
-                          style: const TextStyle(fontWeight: FontWeight.w800)),
-                      if (v.isDefault) ...[
-                        const SizedBox(width: 7),
-                        pill('PRIMARY')
-                      ]
-                    ]),
-                    Text('${v.reg} · ${v.color} · ${v.category}',
-                        style: const TextStyle(color: muted, fontSize: 12))
-                  ])),
-              if (!v.isDefault)
-                IconButton(
-                    icon: const Icon(Icons.star_border, color: green),
-                    tooltip: 'Set primary',
-                    onPressed: () async {
-                      await WashProRepository.setPrimaryVehicle(v.id);
-                      setState(() {});
-                    }),
-              IconButton(
-                  icon: const Icon(Icons.edit_outlined, color: muted),
-                  onPressed: () => showVehicleDialog(
-                      context, () => setState(() {}),
-                      existing: v)),
-              IconButton(
-                  icon: const Icon(Icons.delete_outline,
-                      color: Color(0xFFB42318)),
-                  onPressed: () => showDialog(
-                      context: context,
-                      builder: (c) => AlertDialog(
-                              title: const Text('Delete vehicle?'),
-                              content: Text(
-                                  'Remove ${v.make} ${v.model} (${v.reg}) from your garage?'),
-                              actions: [
-                                TextButton(
-                                    onPressed: () => Navigator.pop(c),
-                                    child: const Text('Keep')),
-                                TextButton(
-                                    onPressed: () async {
-                                      await WashProRepository.deleteVehicle(
-                                          v.id);
-                                      setState(
-                                          () => AppState.vehicles.remove(v));
-                                      if (c.mounted) Navigator.pop(c);
-                                    },
-                                    child: const Text('Delete',
-                                        style: TextStyle(
-                                            color: Color(0xFFB42318))))
-                              ])))
-            ])))),
+                  Container(
+                      width: 54,
+                      height: 46,
+                      decoration: BoxDecoration(
+                          color: context.wpMint,
+                          borderRadius: BorderRadius.circular(12)),
+                      child: Icon(Icons.directions_car_filled,
+                          color: context.wpPrimary)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                        Row(children: [
+                          Flexible(
+                              child: Text(v.displayName,
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      color: context.wpInk),
+                                  overflow: TextOverflow.ellipsis)),
+                          if (v.isDefault) ...[
+                            const SizedBox(width: 7),
+                            pill('PRIMARY')
+                          ]
+                        ]),
+                        Text(
+                            [
+                              if (v.reg.trim().isNotEmpty) v.reg,
+                              v.seatingLabel,
+                            ].join(' · '),
+                            style: TextStyle(
+                                color: context.wpMuted, fontSize: 12))
+                      ])),
+                  IconButton(
+                      icon: Icon(Icons.edit_outlined, color: context.wpMuted),
+                      onPressed: () => showVehicleSheet(
+                          context, () => setState(() {}),
+                          existing: v)),
+                  IconButton(
+                      icon: const Icon(Icons.delete_outline,
+                          color: WpColors.error),
+                      onPressed: () => showDialog(
+                          context: context,
+                          builder: (c) => AlertDialog(
+                                  title: const Text('Delete vehicle?'),
+                                  content: Text(
+                                      'Remove ${v.displayName} (${v.reg}) from your garage?'),
+                                  actions: [
+                                    TextButton(
+                                        onPressed: () => Navigator.pop(c),
+                                        child: const Text('Keep')),
+                                    TextButton(
+                                        onPressed: () async {
+                                          await WashProRepository.deleteVehicle(
+                                              v.id);
+                                          setState(() =>
+                                              AppState.vehicles.remove(v));
+                                          if (c.mounted) Navigator.pop(c);
+                                        },
+                                        child: const Text('Delete',
+                                            style: TextStyle(
+                                                color: WpColors.error)))
+                                  ])))
+                ])))),
         SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
                 onPressed: () =>
-                    showVehicleDialog(context, () => setState(() {})),
-                icon: const Icon(Icons.add, color: green),
-                label: const Text('Add vehicle',
-                    style: TextStyle(color: dark, fontWeight: FontWeight.w700)),
+                    showVehicleSheet(context, () => setState(() {})),
+                icon: Icon(Icons.add, color: context.wpPrimary),
+                label: Text('Add vehicle',
+                    style: TextStyle(
+                        color: context.wpPrimary, fontWeight: FontWeight.w700)),
                 style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 15),
+                    side: BorderSide(color: context.wpPrimary),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(14)))))
       ]));
@@ -4194,96 +4762,297 @@ class AddressesPage extends StatefulWidget {
 }
 
 class _AddressesState extends State<AddressesPage> {
+  bool _saving = false;
+  bool _loading = false;
+  String? _saveError;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshList();
+  }
+
+  Future<void> _refreshList() async {
+    if (!WashProRepository.live) return;
+    setState(() => _loading = true);
+    await WashProRepository.reloadAddresses();
+    if (mounted) setState(() => _loading = false);
+  }
+
+  Future<void> _addOrEdit({Addr? existing}) async {
+    if (_saving || WashProRepository.addressWriteInFlight) return;
+    final result = await Navigator.push<LocationPickResult>(
+        context,
+        MaterialPageRoute(
+            builder: (_) => LocationPickerPage(initial: existing)));
+    if (result == null || !mounted) return;
+
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
+
+    AddressWriteResult write;
+    if (existing != null) {
+      // Keep a rollback copy so a failed write does not leave half-edited UI
+      // without a matching Firestore document.
+      final prior = (
+        label: existing.label,
+        line: existing.line,
+        area: existing.area,
+        slot: existing.slot,
+        lat: existing.latitude,
+        lng: existing.longitude,
+        city: existing.city,
+        postal: existing.postalCode,
+        building: existing.building,
+        state: existing.state,
+        country: existing.country,
+        formatted: existing.formattedAddress,
+      );
+      existing
+        ..label = result.displayName
+        ..line = result.line
+        ..area = result.area
+        ..slot = result.building.isNotEmpty ? result.building : existing.slot
+        ..latitude = result.latitude
+        ..longitude = result.longitude
+        ..city = result.city
+        ..postalCode = result.postalCode
+        ..building = result.building
+        ..state = result.state
+        ..country = result.country
+        ..formattedAddress = result.formattedAddress;
+      write = await WashProRepository.updateAddress(existing);
+      if (!write.ok) {
+        existing
+          ..label = prior.label
+          ..line = prior.line
+          ..area = prior.area
+          ..slot = prior.slot
+          ..latitude = prior.lat
+          ..longitude = prior.lng
+          ..city = prior.city
+          ..postalCode = prior.postal
+          ..building = prior.building
+          ..state = prior.state
+          ..country = prior.country
+          ..formattedAddress = prior.formatted;
+      }
+    } else {
+      final na = Addr(
+          '',
+          result.displayName,
+          result.line,
+          result.area,
+          'kondapur',
+          result.building.isNotEmpty ? result.building : '—',
+          latitude: result.latitude,
+          longitude: result.longitude,
+          city: result.city,
+          postalCode: result.postalCode,
+          building: result.building,
+          state: result.state,
+          country: result.country,
+          formattedAddress: result.formattedAddress);
+      na.isDefault = AppState.addresses.isEmpty;
+      write = await WashProRepository.saveAddress(na);
+      if (write.ok) {
+        // Add only after Firestore confirms — prevents empty-list flash and
+        // "update" failures against local-only ids.
+        if (!AppState.addresses.any((x) => x.id == na.id)) {
+          AppState.addresses.add(na);
+        }
+      }
+    }
+
+    if (!mounted) return;
+    setState(() {
+      _saving = false;
+      _saveError = write.ok ? null : write.message;
+    });
+    if (write.ok) {
+      toast(context, existing != null ? 'Address updated' : 'Address saved');
+    }
+  }
+
+  Future<void> _delete(Addr a) async {
+    if (_saving) return;
+    final isOnly = AppState.addresses.length == 1;
+    final isSelected = a.isDefault;
+    final ok = await showDialog<bool>(
+        context: context,
+        builder: (c) => AlertDialog(
+              title: const Text('Delete address?'),
+              content: Text(isSelected && !isOnly
+                  ? 'This is your selected service address. Delete it anyway? Another address will become selected.'
+                  : isOnly
+                      ? 'This is your only saved address. Delete it?'
+                      : 'Remove ${a.titleLine}?'),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(c, false),
+                    child: const Text('Keep')),
+                TextButton(
+                    onPressed: () => Navigator.pop(c, true),
+                    child: const Text('Delete',
+                        style: TextStyle(color: WpColors.error))),
+              ],
+            ));
+    if (ok != true) return;
+    setState(() => _saving = true);
+    final res = await WashProRepository.deleteAddress(a.id);
+    if (res.ok) {
+      AppState.addresses.removeWhere((x) => x.id == a.id);
+      if (AppState.addresses.isNotEmpty &&
+          !AppState.addresses.any((x) => x.isDefault)) {
+        await WashProRepository.setDefaultAddress(AppState.addresses.first.id);
+      }
+    } else {
+      _saveError = res.message;
+    }
+    if (mounted) setState(() => _saving = false);
+  }
+
   @override
   Widget build(BuildContext context) => SubPage(
-      title: 'Saved addresses',
+      title: 'Saved Addresses',
       child: Column(children: [
+        if (_saving)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 10),
+            child: LinearProgressIndicator(minHeight: 3),
+          ),
+        if (_saveError != null)
+          wpCard(
+              context: context,
+              p: const EdgeInsets.all(14),
+              child: Row(children: [
+                const Icon(Icons.error_outline, color: WpColors.error),
+                const SizedBox(width: 10),
+                Expanded(
+                    child: Text(_saveError!,
+                        style: const TextStyle(
+                            color: WpColors.error, fontSize: 13))),
+                TextButton(
+                    onPressed: _saving
+                        ? null
+                        : () async {
+                            setState(() => _saveError = null);
+                            await _refreshList();
+                          },
+                    child: const Text('Retry')),
+              ])),
         if (AppState.loadError.isNotEmpty)
           loadErrorBanner(context, () async {
-            await WashProRepository.refreshMine();
-            if (mounted) setState(() {});
+            await _refreshList();
           }),
-        if (AppState.addresses.isEmpty)
+        if (_loading && AppState.addresses.isEmpty)
+          const Padding(
+            padding: EdgeInsets.all(24),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (AppState.addresses.isEmpty)
           wpCard(
+              context: context,
               p: const EdgeInsets.all(22),
-              child: const Column(children: [
-                Text('📍', style: TextStyle(fontSize: 30)),
-                SizedBox(height: 8),
+              child: Column(children: [
+                Icon(Icons.location_on_outlined,
+                    size: 34, color: context.wpPrimary),
+                const SizedBox(height: 8),
                 Text('No addresses yet',
-                    style: TextStyle(fontWeight: FontWeight.w800)),
+                    style: TextStyle(
+                        fontWeight: FontWeight.w800, color: context.wpInk)),
                 Text('Add where your car is parked so experts can find it.',
-                    style: TextStyle(color: muted, fontSize: 12.5))
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: context.wpMuted, fontSize: 12.5))
               ])),
         ...AppState.addresses.map((a) => Padding(
             padding: const EdgeInsets.only(bottom: 11),
             child: wpCard(
-                child: Row(children: [
-              mintIcon(Icons.location_on_outlined),
-              const SizedBox(width: 12),
-              Expanded(
-                  child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                    Row(children: [
-                      Text(a.label,
-                          style: const TextStyle(fontWeight: FontWeight.w800)),
-                      if (a.isDefault) ...[
-                        const SizedBox(width: 7),
-                        pill('SELECTED')
-                      ]
-                    ]),
-                    Text('${a.line}\n${a.slot} · ${a.area}',
-                        style: const TextStyle(
-                            color: muted, fontSize: 12, height: 1.4))
-                  ])),
-              if (!a.isDefault)
-                IconButton(
-                    icon: const Icon(Icons.check_circle_outline, color: green),
-                    tooltip: 'Use this address',
-                    onPressed: () async {
-                      await WashProRepository.setDefaultAddress(a.id);
-                      setState(() {});
-                    }),
-              IconButton(
-                  icon: const Icon(Icons.edit_outlined, color: muted),
-                  onPressed: () => showAddressDialog(
-                      context, () => setState(() {}),
-                      existing: a)),
-              IconButton(
-                  icon: const Icon(Icons.delete_outline,
-                      color: Color(0xFFB42318)),
-                  onPressed: () => showDialog(
-                      context: context,
-                      builder: (c) => AlertDialog(
-                              title: const Text('Delete address?'),
-                              content: Text('Remove ${a.label} (${a.line})?'),
-                              actions: [
-                                TextButton(
-                                    onPressed: () => Navigator.pop(c),
-                                    child: const Text('Keep')),
-                                TextButton(
-                                    onPressed: () async {
-                                      await WashProRepository.deleteAddress(
-                                          a.id);
-                                      setState(
-                                          () => AppState.addresses.remove(a));
-                                      if (c.mounted) Navigator.pop(c);
-                                    },
-                                    child: const Text('Delete',
-                                        style: TextStyle(
-                                            color: Color(0xFFB42318))))
-                              ])))
-            ])))),
+                context: context,
+                selected: a.isDefault,
+                onTap: _saving
+                    ? null
+                    : () async {
+                        setState(() => _saving = true);
+                        await WashProRepository.setDefaultAddress(a.id);
+                        if (mounted) setState(() => _saving = false);
+                      },
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Container(
+                      width: 44,
+                      height: 44,
+                      decoration: BoxDecoration(
+                          color: context.wpMint,
+                          borderRadius: BorderRadius.circular(12)),
+                      child: Icon(Icons.location_on,
+                          color: context.wpPrimary, size: 22)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                        Row(children: [
+                          Flexible(
+                              child: Text(a.titleLine,
+                                  style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                      color: context.wpInk),
+                                  overflow: TextOverflow.ellipsis)),
+                          if (a.isDefault) ...[
+                            const SizedBox(width: 7),
+                            pill('SELECTED')
+                          ]
+                        ]),
+                        const SizedBox(height: 3),
+                        Text(a.subtitleLine,
+                            style: TextStyle(
+                                color: context.wpMuted,
+                                fontSize: 12.5,
+                                height: 1.35)),
+                        const SizedBox(height: 6),
+                        if (a.hasCoordinates)
+                          Text(
+                              'GPS ${a.latitude!.toStringAsFixed(5)}, ${a.longitude!.toStringAsFixed(5)}',
+                              style: TextStyle(
+                                  color: context.wpPrimary,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w600))
+                        else
+                          Row(children: [
+                            const Icon(Icons.warning_amber_rounded,
+                                size: 14, color: WpColors.error),
+                            const SizedBox(width: 4),
+                            Expanded(
+                                child: Text(
+                                    'Location not verified — pin exact spot',
+                                    style: TextStyle(
+                                        color: WpColors.error,
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w600))),
+                          ]),
+                      ])),
+                  IconButton(
+                      icon: Icon(Icons.edit_outlined, color: context.wpMuted),
+                      onPressed: _saving ? null : () => _addOrEdit(existing: a)),
+                  IconButton(
+                      icon: const Icon(Icons.delete_outline,
+                          color: WpColors.error),
+                      onPressed: _saving ? null : () => _delete(a)),
+                ])))),
         SizedBox(
             width: double.infinity,
             child: OutlinedButton.icon(
-                onPressed: () =>
-                    showAddressDialog(context, () => setState(() {})),
-                icon: const Icon(Icons.add_location_alt, color: green),
-                label: const Text('Add address',
-                    style: TextStyle(color: dark, fontWeight: FontWeight.w700)),
+                onPressed: _saving ? null : () => _addOrEdit(),
+                icon: Icon(Icons.add_location_alt_outlined,
+                    color: context.wpPrimary),
+                label: Text(_saving ? 'Saving…' : 'Add address',
+                    style: TextStyle(
+                        color: context.wpPrimary, fontWeight: FontWeight.w800)),
                 style: OutlinedButton.styleFrom(
                     padding: const EdgeInsets.symmetric(vertical: 15),
+                    side: BorderSide(color: context.wpPrimary, width: 1.2),
                     shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(14)))))
       ]));
@@ -4456,135 +5225,61 @@ class _SupportState extends State<SupportPage> {
       ])));
 }
 
+/// Opens the simplified Add Vehicle bottom sheet (name / reg / 5–7 seater).
 void showVehicleDialog(BuildContext context, VoidCallback refresh,
     {Vehicle? existing}) {
-  final nick = TextEditingController(text: existing?.nickname),
-      make = TextEditingController(text: existing?.make),
-      model = TextEditingController(text: existing?.model),
-      reg = TextEditingController(text: existing?.reg);
-  String cat = existing?.category ?? 'suv';
-  showDialog(
-      context: context,
-      builder: (c) => AlertDialog(
-              title: const Text('Add vehicle'),
-              content: SingleChildScrollView(
-                  child: Column(mainAxisSize: MainAxisSize.min, children: [
-                TextField(
-                    controller: nick,
-                    decoration: const InputDecoration(
-                        labelText: 'Nickname (e.g. Nexon EV)')),
-                TextField(
-                    controller: make,
-                    decoration:
-                        const InputDecoration(labelText: 'Make (Tata)')),
-                TextField(
-                    controller: model,
-                    decoration:
-                        const InputDecoration(labelText: 'Model (Nexon EV)')),
-                TextField(
-                    controller: reg,
-                    decoration: const InputDecoration(
-                        labelText: 'Registration (TS 09 MX 1234)')),
-                DropdownButtonFormField(
-                    value: cat,
-                    items: ['hatchback', 'sedan', 'suv', 'luxury']
-                        .map((x) => DropdownMenuItem(value: x, child: Text(x)))
-                        .toList(),
-                    onChanged: (v) => cat = v!,
-                    decoration: const InputDecoration(labelText: 'Category'))
-              ])),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(c),
-                    child: const Text('Cancel')),
-                FilledButton(
-                    style: FilledButton.styleFrom(backgroundColor: dark),
-                    onPressed: () async {
-                      if (make.text.trim().isEmpty ||
-                          model.text.trim().isEmpty ||
-                          reg.text.trim().isEmpty) {
-                        return;
-                      }
-                      if (existing != null) {
-                        existing.nickname =
-                            nick.text.isEmpty ? model.text : nick.text;
-                        existing.category = cat;
-                        existing.make = make.text;
-                        existing.model = model.text;
-                        existing.reg = reg.text.toUpperCase();
-                        await WashProRepository.updateVehicle(existing);
-                      } else {
-                        final nv = Vehicle(
-                            'v${DateTime.now().millisecondsSinceEpoch}',
-                            nick.text.isEmpty ? model.text : nick.text,
-                            cat,
-                            make.text,
-                            model.text,
-                            '—',
-                            reg.text.toUpperCase());
-                        if (AppState.vehicles.isEmpty) nv.isDefault = true;
-                        AppState.vehicles.add(nv);
-                        await WashProRepository.saveVehicle(nv);
-                      }
-                      if (c.mounted) Navigator.pop(c);
-                      refresh();
-                    },
-                    child: const Text('Save'))
-              ]));
+  showVehicleSheet(context, refresh, existing: existing);
 }
 
-void showAddressDialog(BuildContext context, VoidCallback refresh,
-    {Addr? existing}) {
-  final label = TextEditingController(text: existing?.label),
-      line = TextEditingController(text: existing?.line),
-      slotC = TextEditingController(text: existing?.slot);
-  showDialog(
-      context: context,
-      builder: (c) => AlertDialog(
-              title: Text(existing == null ? 'Add address' : 'Edit address'),
-              content: Column(mainAxisSize: MainAxisSize.min, children: [
-                TextField(
-                    controller: label,
-                    decoration: const InputDecoration(
-                        labelText: 'Label (Home / Office)')),
-                TextField(
-                    controller: line,
-                    decoration: const InputDecoration(
-                        labelText: 'Full address (society, tower, area)')),
-                TextField(
-                    controller: slotC,
-                    decoration: const InputDecoration(
-                        labelText: 'Parking slot / gate notes (e.g. B2-118)'))
-              ]),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(c),
-                    child: const Text('Cancel')),
-                FilledButton(
-                    style: FilledButton.styleFrom(backgroundColor: dark),
-                    onPressed: () async {
-                      if (line.text.trim().isEmpty) return;
-                      if (existing != null) {
-                        existing.label =
-                            label.text.isEmpty ? 'Address' : label.text;
-                        existing.line = line.text;
-                        existing.slot = slotC.text;
-                        await WashProRepository.updateAddress(existing);
-                      } else {
-                        final na = Addr(
-                            'a${DateTime.now().millisecondsSinceEpoch}',
-                            label.text.isEmpty ? 'Address' : label.text,
-                            line.text,
-                            'Hyderabad',
-                            'kondapur',
-                            slotC.text.isEmpty ? '—' : slotC.text);
-                        if (AppState.addresses.isEmpty) na.isDefault = true;
-                        AppState.addresses.add(na);
-                        await WashProRepository.saveAddress(na);
-                      }
-                      if (c.mounted) Navigator.pop(c);
-                      refresh();
-                    },
-                    child: const Text('Save'))
-              ]));
+/// Opens the OSM location picker for create/edit, then persists via repository.
+Future<void> showAddressDialog(BuildContext context, VoidCallback refresh,
+    {Addr? existing}) async {
+  if (WashProRepository.addressWriteInFlight) return;
+  final result = await Navigator.push<LocationPickResult>(
+      context,
+      MaterialPageRoute(
+          builder: (_) => LocationPickerPage(initial: existing)));
+  if (result == null) return;
+  if (existing != null) {
+    existing
+      ..label = result.displayName
+      ..line = result.line
+      ..area = result.area
+      ..slot = result.building.isNotEmpty ? result.building : existing.slot
+      ..latitude = result.latitude
+      ..longitude = result.longitude
+      ..city = result.city
+      ..postalCode = result.postalCode
+      ..building = result.building
+      ..state = result.state
+      ..country = result.country
+      ..formattedAddress = result.formattedAddress;
+    final write = await WashProRepository.updateAddress(existing);
+    if (write.ok && context.mounted) toast(context, 'Address updated');
+  } else {
+    final na = Addr(
+        '',
+        result.displayName,
+        result.line,
+        result.area,
+        'kondapur',
+        result.building.isNotEmpty ? result.building : '—',
+        latitude: result.latitude,
+        longitude: result.longitude,
+        city: result.city,
+        postalCode: result.postalCode,
+        building: result.building,
+        state: result.state,
+        country: result.country,
+        formattedAddress: result.formattedAddress);
+    na.isDefault = AppState.addresses.isEmpty;
+    final write = await WashProRepository.saveAddress(na);
+    if (write.ok) {
+      if (!AppState.addresses.any((x) => x.id == na.id)) {
+        AppState.addresses.add(na);
+      }
+      if (context.mounted) toast(context, 'Address saved');
+    }
+  }
+  refresh();
 }

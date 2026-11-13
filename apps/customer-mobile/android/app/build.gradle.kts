@@ -47,12 +47,12 @@ android {
 
     buildTypes {
         release {
-            // Signed with the WashPro upload key when key.properties exists,
-            // otherwise falls back to debug signing for local release runs.
-            signingConfig = if (keystorePropertiesFile.exists())
-                signingConfigs.getByName("release")
-            else
-                signingConfigs.getByName("debug")
+            // Play releases MUST use the upload keystore. Fail closed — never
+            // silently fall back to debug signing for a production AAB.
+            check(keystorePropertiesFile.exists()) {
+                "Missing android/key.properties — refuse release build without Play upload signing."
+            }
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")

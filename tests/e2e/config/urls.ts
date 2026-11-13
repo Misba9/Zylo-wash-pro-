@@ -1,0 +1,17 @@
+export const urls = {
+  marketing: process.env.E2E_MARKETING_URL || "https://wash-pro-7f3b1.web.app",
+  marketingWww: process.env.E2E_PROD_MARKETING_URL || "https://www.zyloo.co.in",
+  marketingRoot: "https://zyloo.co.in",
+  field: process.env.E2E_PROD_WORKER_URL || "https://www.field.zyloo.co.in",
+  fieldLegacy: "https://field.zyloo.co.in",
+  workerLocal: process.env.E2E_WORKER_URL || "http://127.0.0.1:5174",
+  adminLocal: process.env.E2E_ADMIN_URL || "http://127.0.0.1:5173",
+  websiteLocal: "http://127.0.0.1:5175",
+  customerWeb: process.env.E2E_CUSTOMER_WEB_URL || "https://wash-pro-customer.web.app",
+  workerHosted: "https://wash-pro-worker.web.app",
+  adminHosted: "https://wash-pro-admin.web.app",
+  privacy: "https://wash-pro-customer.web.app/privacy.html",
+  deleteAccount: "https://wash-pro-customer.web.app/delete-account.html",
+  unifiedField: "https://wash-pro-7f3b1.web.app/field/",
+  unifiedAdmin: "https://wash-pro-7f3b1.web.app/admin/",
+};

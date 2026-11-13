@@ -9,6 +9,10 @@ import 'package:flutter/material.dart';
 bool fbLive = false;
 String? fbUid;
 
+/// Guest browsing (Skip login) — can view services; booking requires sign-in.
+bool guestBrowsing = false;
+bool get isSignedIn => fbUid != null;
+
 // ---------- Catalog models ----------
 class Service {
   const Service(this.id, this.name, this.tag, this.icon, this.base, this.mins,
@@ -181,17 +185,125 @@ List<Plan> plans = <Plan>[
 // ---------- User-owned models ----------
 class Vehicle {
   Vehicle(this.id, this.nickname, this.category, this.make, this.model,
-      this.color, this.reg);
+      this.color, this.reg,
+      {this.seating});
   String id, nickname, category, make, model, color, reg;
+  /// New simplified seating: '5' | '7' | null (legacy records).
+  String? seating;
   bool isDefault = false;
-  String get label => '$make $model';
-  String get fullLabel => '$make $model · $reg';
+
+  /// Prefer nickname, then make+model — never show empty labels.
+  String get displayName {
+    if (nickname.trim().isNotEmpty) return nickname.trim();
+    final mm = '$make $model'.trim();
+    if (mm.isNotEmpty) return mm;
+    return 'Vehicle';
+  }
+
+  String get label => displayName;
+  String get fullLabel =>
+      reg.trim().isEmpty ? displayName : '$displayName · $reg';
+
+  /// UI seating label. Legacy categories are NOT auto-converted to 7-seater.
+  String get seatingLabel {
+    if (seating == '5') return '5 Seater';
+    if (seating == '7') return '7 Seater';
+    return category.isEmpty ? 'Vehicle' : category.toUpperCase();
+  }
+
+  /// Pricing still uses hatchback/sedan/suv/luxury. New seating maps:
+  /// 5 → sedan, 7 → suv. Legacy keeps stored [category].
+  String get pricingCategory {
+    if (seating == '5') return 'sedan';
+    if (seating == '7') return 'suv';
+    return category.isEmpty ? 'sedan' : category;
+  }
+
+  static String pricingCategoryForSeating(String seating) =>
+      seating == '7' ? 'suv' : 'sedan';
 }
 
 class Addr {
-  Addr(this.id, this.label, this.line, this.area, this.areaId, this.slot);
+  Addr(this.id, this.label, this.line, this.area, this.areaId, this.slot,
+      {this.latitude,
+      this.longitude,
+      this.city = '',
+      this.postalCode = '',
+      this.building = '',
+      this.state = '',
+      this.country = 'India',
+      this.formattedAddress = ''});
   String id, label, line, area, areaId, slot;
+  double? latitude, longitude;
+  String city, postalCode, building, state, country, formattedAddress;
   bool isDefault = false;
+
+  /// True only when both coordinates are finite and in range (never invent).
+  bool get hasCoordinates {
+    final lat = latitude, lng = longitude;
+    if (lat == null || lng == null) return false;
+    if (lat.isNaN || lng.isNaN || lat.isInfinite || lng.isInfinite) return false;
+    return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+  }
+
+  String get locality => area;
+
+  String get displayFormatted {
+    if (formattedAddress.trim().isNotEmpty) return formattedAddress.trim();
+    final parts = <String>[
+      if (slot.trim().isNotEmpty && slot.trim() != '—') slot.trim(),
+      if (building.trim().isNotEmpty) building.trim(),
+      if (line.trim().isNotEmpty) line.trim(),
+      if (area.trim().isNotEmpty) area.trim(),
+      if (city.trim().isNotEmpty) city.trim(),
+      if (postalCode.trim().isNotEmpty) postalCode.trim(),
+    ];
+    return parts.isEmpty ? 'Address details incomplete' : parts.join(', ');
+  }
+
+  String get titleLine {
+    final house = slot.trim().isNotEmpty && slot.trim() != '—' ? slot.trim() : '';
+    if (house.isNotEmpty && label.trim().isNotEmpty) return '$house · $label';
+    if (label.trim().isNotEmpty) return label.trim();
+    if (house.isNotEmpty) return house;
+    return 'Address';
+  }
+
+  String get subtitleLine {
+    final parts = <String>[
+      if (line.trim().isNotEmpty) line.trim(),
+      if (city.trim().isNotEmpty)
+        city.trim()
+      else if (area.trim().isNotEmpty)
+        area.trim(),
+    ];
+    return parts.isEmpty ? 'Tap to complete address details' : parts.join(' · ');
+  }
+
+  String get shortArea =>
+      city.trim().isNotEmpty ? city.trim() : (area.trim().isNotEmpty ? area : 'Hyderabad');
+
+  /// Immutable booking snapshot payload (client path). Backend mirrors this.
+  Map<String, dynamic> toServiceLocationSnapshot() => {
+        'addressId': id,
+        'addressLabel': label,
+        'formattedAddress': displayFormatted,
+        'building': building.isNotEmpty ? building : (slot != '—' ? slot : ''),
+        'street': line,
+        'locality': area,
+        'city': city,
+        'state': state,
+        'postalCode': postalCode,
+        'country': country.isNotEmpty ? country : 'India',
+        'latitude': hasCoordinates ? latitude : null,
+        'longitude': hasCoordinates ? longitude : null,
+      };
+}
+
+bool isValidLatLng(double? lat, double? lng) {
+  if (lat == null || lng == null) return false;
+  if (lat.isNaN || lng.isNaN || lat.isInfinite || lng.isInfinite) return false;
+  return lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
 }
 
 class Booking {
@@ -295,6 +407,7 @@ class AppState {
     memberSince = null;
     profileLoaded = false;
     loadError = '';
+    guestBrowsing = false;
     vehicles.clear();
     addresses.clear();
     bookings.clear();

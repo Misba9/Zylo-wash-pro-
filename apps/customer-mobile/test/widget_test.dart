@@ -1,19 +1,46 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:washpro_customer/main.dart';
 import 'package:washpro_customer/data/app_data.dart';
 import 'package:washpro_customer/data/repository.dart';
 
 void main() {
-  testWidgets('WashPro shows email + Google login', (tester) async {
+  testWidgets('Zylo shows simple phone OTP login with Skip', (tester) async {
     await tester.pumpWidget(const WashProApp());
     // No live session in tests -> splash gate resolves to the auth screen.
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pump();
-    expect(find.text('Welcome back'), findsOneWidget);
-    expect(find.text('Sign in'), findsWidgets);
+    expect(find.text('Sign in to Zylo'), findsOneWidget);
+    expect(find.text('Send OTP'), findsOneWidget);
     expect(find.text('Continue with Google'), findsOneWidget);
-    expect(find.text('Send OTP'), findsNothing);
+    expect(find.text('Skip login'), findsOneWidget);
+    expect(find.text('Use email instead'), findsNothing);
+  });
+
+  testWidgets('Skip login opens guest browse shell', (tester) async {
+    guestBrowsing = false;
+    fbUid = null;
+    // Home ListTiles sit in decorated cards — ignore that known paint assert in tests.
+    final previous = FlutterError.onError;
+    FlutterError.onError = (details) {
+      if (details.exceptionAsString().contains('ListTile background')) return;
+      previous?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = previous);
+
+    await tester.pumpWidget(const WashProApp());
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump();
+    expect(find.text('Skip login'), findsOneWidget);
+    await tester.tap(find.text('Skip login'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(guestBrowsing, isTrue);
+    expect(isSignedIn, isFalse);
+    expect(find.text('Sign in to Zylo'), findsNothing);
+    expect(find.text('Home'), findsWidgets);
   });
 
   test('mockup pricing: services & plans', () {

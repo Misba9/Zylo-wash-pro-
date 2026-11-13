@@ -1,10 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
     <!-- FCM push notifications (runtime-requested on Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <application
-        android:label="WashPro"
+        android:label="Zylo"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity
@@ -55,10 +57,38 @@
          https://developer.android.com/reference/android/content/Intent#ACTION_PROCESS_TEXT.
 
          In particular, this is used by the Flutter engine in io.flutter.plugin.text.ProcessTextPlugin. -->
+    <!--
+      Razorpay UPI Intent (Android 11+ / targetSdk 30+):
+      Without these <queries>, Checkout cannot see installed UPI apps and UPI
+      often disappears entirely even when UPI is ACTIVATED on the Dashboard.
+      Official docs: payment-gateway/android-integration/standard/payment-methods
+    -->
     <queries>
         <intent>
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW"/>
+            <data android:scheme="upi"/>
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SEND"/>
+        </intent>
+        <!-- Primary PSPs Razorpay recommends for Intent (GPay, PhonePe, Paytm, BHIM) -->
+        <package android:name="com.google.android.apps.nbu.paisa.user"/>
+        <package android:name="com.phonepe.app"/>
+        <package android:name="net.one97.paytm"/>
+        <package android:name="in.org.npci.upiapp"/>
+        <package android:name="com.whatsapp"/>
+        <package android:name="com.csam.icici.bank.imobile"/>
+        <package android:name="com.sbi.upi"/>
+        <package android:name="com.axis.mobile"/>
+        <package android:name="com.amazon.mobile.shopping"/>
+        <package android:name="com.dreamplug.androidapp"/>
+        <package android:name="com.mobikwik_new"/>
+        <package android:name="com.freecharge.android"/>
+        <package android:name="com.myairtelapp"/>
+        <package android:name="com.snapwork.hdfc"/>
     </queries>
 </manifest>

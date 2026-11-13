@@ -13,3 +13,4 @@ apps/customer-mobile/.dart_tool/
 # Android signing (NEVER commit)
 *.jks
 key.properties
+.tools/

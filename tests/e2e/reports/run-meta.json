@@ -1,0 +1,11 @@
+{
+  "startedAt": "2026-11-11T19:15:51.297Z",
+  "marketing": "https://wash-pro-7f3b1.web.app",
+  "worker": "http://127.0.0.1:5174",
+  "admin": "http://127.0.0.1:5173",
+  "customerWeb": "https://wash-pro-customer.web.app",
+  "hasAdminCreds": false,
+  "hasWorkerCreds": false,
+  "hasFirebaseTestPhone": false,
+  "finishedAt": "2026-11-11T19:15:52.452Z"
+}

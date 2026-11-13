@@ -20,11 +20,64 @@ export const createBooking = onCall(async (req) => {
   const subtotal = (PRICES[d.serviceId]?.[category]) ?? service.data()!.pricePaise?.[category];
   if (subtotal == null) throw new HttpsError("failed-precondition", "No price for vehicle category");
   const priceSnapshot = { currency:"INR", subtotalPaise:subtotal, discountPaise:0, taxPaise:0, totalPaise:subtotal, pricingVersion:"hyd-2026.10-v1" };
+  const addr = address.data()!;
+  const lat = typeof addr.latitude === "number" ? addr.latitude : null;
+  const lng = typeof addr.longitude === "number" ? addr.longitude : null;
+  const coordsOk =
+    lat != null && lng != null &&
+    Number.isFinite(lat) && Number.isFinite(lng) &&
+    lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+  // Immutable service-location snapshot from the owned address document only.
+  // Never invent coordinates — legacy addresses may omit lat/lng.
+  const formatted =
+    (addr.formattedAddress || addr.line || addr.addressLine || "").toString() ||
+    [addr.building, addr.slot, addr.locality || addr.area, addr.city]
+      .filter((x) => x && String(x).trim() && String(x).trim() !== "—")
+      .join(", ");
+  const serviceLocation = {
+    addressId: d.addressId,
+    addressLabel: (addr.label || "Address").toString(),
+    formattedAddress: formatted,
+    building: (addr.building || addr.slot || "").toString() || null,
+    street: (addr.line || addr.addressLine || "").toString() || null,
+    locality: (addr.locality || addr.area || "").toString() || null,
+    city: (addr.city || "").toString() || null,
+    state: (addr.state || "").toString() || null,
+    postalCode: (addr.postalCode || "").toString() || null,
+    country: (addr.country || "India").toString(),
+    latitude: coordsOk ? lat : null,
+    longitude: coordsOk ? lng : null,
+    capturedAt: new Date().toISOString(),
+  };
   const ref = db.collection("bookings").doc();
   const status = d.paymentMethod === "online" ? "awaiting_payment" : "confirmed";
-  await ref.set({ id:ref.id, customerUid:uid, vehicleId:d.vehicleId, addressId:d.addressId, serviceId:d.serviceId, serviceAreaId:address.data()!.serviceAreaId, assignedWorkerUid:null, bookingType:d.bookingType, status, scheduledAt:new Date(d.scheduledAt), estimatedDurationMinutes:DURATIONS[d.serviceId]?.[category] ?? 45, priceSnapshot, paymentMethod:d.paymentMethod, paymentStatus: d.paymentMethod==="online" ? "pending" : "pending", subscriptionId:null, occurrenceId:null, createdAt:FieldValue.serverTimestamp(), updatedAt:FieldValue.serverTimestamp(), completedAt:null });
+  await ref.set({
+    id: ref.id,
+    customerUid: uid,
+    vehicleId: d.vehicleId,
+    addressId: d.addressId,
+    addressLabel: `${serviceLocation.addressLabel}${serviceLocation.locality ? ` — ${serviceLocation.locality}` : ""}`,
+    addressSnapshot: formatted,
+    serviceLocation,
+    serviceLocationCapturedAt: FieldValue.serverTimestamp(),
+    serviceId: d.serviceId,
+    serviceAreaId: addr.serviceAreaId || addr.areaId,
+    assignedWorkerUid: null,
+    bookingType: d.bookingType,
+    status,
+    scheduledAt: new Date(d.scheduledAt),
+    estimatedDurationMinutes: DURATIONS[d.serviceId]?.[category] ?? 45,
+    priceSnapshot,
+    paymentMethod: d.paymentMethod,
+    paymentStatus: d.paymentMethod === "online" ? "pending" : "pending",
+    subscriptionId: null,
+    occurrenceId: null,
+    createdAt: FieldValue.serverTimestamp(),
+    updatedAt: FieldValue.serverTimestamp(),
+    completedAt: null,
+  });
   await notify(uid, "booking_created", "Booking received", `${service.data()!.name} · ${status==="confirmed" ? "confirmed" : "complete payment to confirm"}`, ref.id);
-  return { bookingId: ref.id, status, priceSnapshot };
+  return { bookingId: ref.id, status, priceSnapshot, serviceLocation };
 });
 
 export const getAvailableSlots = onCall(async (req) => {

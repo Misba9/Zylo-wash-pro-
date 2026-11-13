@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -137,17 +138,117 @@ class PaymentResult {
 }
 
 class RazorpayService {
-  /// Creates a Razorpay order via the createPaymentOrder Cloud Function,
-  /// opens checkout, then verifies the signature server-side (verifyPayment).
-  /// Keys live ONLY on the server (Firebase secrets); the app receives the
-  /// public keyId from createPaymentOrder. Set keys with:
-  ///   firebase functions:secrets:set RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET
+  static bool _checkoutOpen = false;
+
+  /// Last 10 digits for Razorpay prefill.contact.
+  static String prefillContact(String phone) {
+    final digits = phone.replaceAll(RegExp(r'\D'), '');
+    if (digits.length >= 10) return digits.substring(digits.length - 10);
+    return digits;
+  }
+
+  /// Checkout options for razorpay_flutter Standard Checkout (v1.4.x).
+  ///
+  /// UPI diagnosis (do not treat Dashboard "UPI Activated" as Intent/QR):
+  /// - **Test Mode**: UPI Collect only (`success@razorpay` / `failure@razorpay`).
+  /// - **Live Mode**: UPI Intent (needs installed UPI apps + Manifest `<queries>`)
+  ///   and UPI QR where Checkout supports it. Installing apps alone ≠ QR.
+  /// - Do not prefill `method: card` (biases Checkout away from UPI).
+  /// - Explicit `config.display.blocks` keeps UPI+Cards visible; hide other methods.
+  /// - Never invent QR codes or payment links client-side.
+  static Map<String, dynamic> checkoutOptions({
+    required String keyId,
+    required String orderId,
+    required int amountPaise,
+    required String bookingId,
+    required String name,
+    required String email,
+    required String phone,
+    String? preferredMethod,
+  }) {
+    final contact = prefillContact(phone);
+    final prefill = <String, dynamic>{
+      if (contact.isNotEmpty) 'contact': contact,
+      if (email.trim().isNotEmpty) 'email': email.trim(),
+      if (name.trim().isNotEmpty) 'name': name.trim(),
+    };
+    if (preferredMethod == 'upi' || preferredMethod == 'card') {
+      prefill['method'] = preferredMethod;
+    }
+    // Request all UPI flows Checkout may offer. Razorpay still gates Intent/QR
+    // to Live Mode; Collect remains the Test Mode path until NPCI sunset.
+    final upiInstrument = <String, dynamic>{
+      'method': 'upi',
+      'flows': <String>['intent', 'collect', 'qr'],
+    };
+    return {
+      'key': keyId,
+      'amount': amountPaise,
+      'currency': 'INR',
+      'order_id': orderId,
+      'name': 'Zylo',
+      'description': 'Doorstep car wash — $bookingId',
+      'prefill': prefill,
+      'config': {
+        'display': {
+          'blocks': {
+            'zylo_pay': {
+              'name': 'Pay with UPI or Card',
+              'instruments': [
+                upiInstrument,
+                {'method': 'card'},
+              ],
+            },
+          },
+          'sequence': ['block.zylo_pay'],
+          'hide': [
+            {'method': 'emi'},
+            {'method': 'netbanking'},
+            {'method': 'wallet'},
+            {'method': 'paylater'},
+          ],
+          // Only our UPI+Card block — avoids default blocks that drop UPI when
+          // no Intent apps are installed under Test keys.
+          'preferences': {'show_default_blocks': false},
+        },
+      },
+      'theme': {'color': '#123F36'},
+      'retry': {'enabled': true, 'max_count': 1},
+      'send_sms_hash': true,
+      'notes': {
+        'bookingId': bookingId,
+        'checkoutMode':
+            keyId.startsWith('rzp_live_') ? 'live' : 'test',
+      },
+    };
+  }
+
+  /// Creates order via createPaymentOrder, opens Checkout with server amount,
+  /// verifies signature via verifyPayment. Never marks paid client-side alone.
+  ///
+  /// [expectedAmountPaise] must match the trusted booking total (`priceSnapshot.totalPaise`).
+  /// Checkout opens only when the server order amount equals that value.
   static Future<PaymentResult> payBooking({
     required String bookingId,
     required String name,
     required String email,
     required String phone,
+    required int expectedAmountPaise,
+    String? preferredMethod,
   }) async {
+    if (_checkoutOpen) {
+      throw PaymentUnavailable(
+          'Payment checkout is already open. Finish or dismiss it first.');
+    }
+    if (!NetStatus.online.value) {
+      throw PaymentUnavailable(
+          'You are offline. Connect to the internet to pay online.');
+    }
+    if (expectedAmountPaise < 100) {
+      throw PaymentUnavailable(
+          'Invalid booking amount. Please reopen the booking and try again.');
+    }
+
     final functions = FirebaseFunctions.instance;
     Map<String, dynamic> order;
     try {
@@ -165,20 +266,44 @@ class RazorpayService {
     final keyId = (order['keyId'] ?? '').toString();
     final orderId = (order['orderId'] ?? '').toString();
     final amount = ((order['amountPaise'] ?? 0) as num).round();
-    if (keyId.isEmpty || orderId.isEmpty) {
+    if (keyId.isEmpty || orderId.isEmpty || amount < 100) {
       throw PaymentUnavailable(
           'Payment gateway keys are not configured yet. Please pay cash or pay later.');
     }
+    if (amount != expectedAmountPaise) {
+      throw PaymentUnavailable(
+          'Payment amount does not match this booking. Please refresh and try again.');
+    }
+    final keyMode = keyId.startsWith('rzp_live_')
+        ? 'live'
+        : keyId.startsWith('rzp_test_')
+            ? 'test'
+            : 'unknown';
+    debugPrint(
+        '[Razorpay] openCheckout mode=$keyMode order=${orderId.length > 8 ? orderId.substring(0, 8) : orderId}… amountPaise=$amount preferred=${preferredMethod ?? 'auto'}');
 
     final completer = Completer<PaymentResult>();
     final rzp = Razorpay();
+    var cleaned = false;
     void cleanup() {
+      if (cleaned) return;
+      cleaned = true;
+      _checkoutOpen = false;
       rzp.clear();
     }
 
-    rzp.on(Razorpay.EVENT_PAYMENT_SUCCESS,
-        (PaymentSuccessResponse r) async {
-      cleanup();
+    Future<void> reportFailure(String? reason, String? code) async {
+      try {
+        await functions.httpsCallable('handlePaymentFailure').call({
+          'bookingId': bookingId,
+          'razorpayOrderId': orderId,
+          'reason': reason,
+          'code': code,
+        });
+      } catch (_) {}
+    }
+
+    rzp.on(Razorpay.EVENT_PAYMENT_SUCCESS, (PaymentSuccessResponse r) async {
       try {
         await functions.httpsCallable('verifyPayment').call({
           'bookingId': bookingId,
@@ -186,36 +311,59 @@ class RazorpayService {
           'razorpayPaymentId': r.paymentId ?? '',
           'razorpaySignature': r.signature ?? '',
         });
-        if (!completer.isCompleted)
+        cleanup();
+        if (!completer.isCompleted) {
           completer.complete(PaymentResult(r.paymentId ?? '', orderId));
+        }
       } on FirebaseFunctionsException catch (e) {
-        if (!completer.isCompleted)
+        cleanup();
+        if (!completer.isCompleted) {
           completer.completeError(PaymentUnavailable(
               'Payment received but verification failed (${e.code}). Our team will reconcile it — do not pay again.'));
+        }
       } catch (_) {
-        if (!completer.isCompleted)
+        cleanup();
+        if (!completer.isCompleted) {
           completer.completeError(PaymentUnavailable(
               'Payment received but verification is pending. Our team will reconcile it — do not pay again.'));
+        }
       }
     });
-    rzp.on(Razorpay.EVENT_PAYMENT_ERROR, (PaymentFailureResponse r) {
+    rzp.on(Razorpay.EVENT_PAYMENT_ERROR, (PaymentFailureResponse r) async {
+      await reportFailure(r.message, r.code?.toString());
       cleanup();
-      if (!completer.isCompleted)
+      if (!completer.isCompleted) {
         completer.completeError(PaymentUnavailable(
             r.message ?? 'Payment was cancelled or failed. You can retry.'));
+      }
     });
     rzp.on(Razorpay.EVENT_EXTERNAL_WALLET, (ExternalWalletResponse r) {});
 
-    rzp.open({
-      'key': keyId,
-      'amount': amount,
-      'currency': 'INR',
-      'order_id': orderId,
-      'name': 'WashPro',
-      'description': 'Doorstep car wash — $bookingId',
-      'prefill': {'contact': phone, 'email': email, 'name': name},
-      'theme': {'color': '#0A3828'},
-    });
+    _checkoutOpen = true;
+    try {
+      rzp.open(checkoutOptions(
+        keyId: keyId,
+        orderId: orderId,
+        amountPaise: amount,
+        bookingId: bookingId,
+        name: name,
+        email: email,
+        phone: phone,
+        preferredMethod: preferredMethod,
+      ));
+    } catch (_) {
+      cleanup();
+      throw PaymentUnavailable(
+          'Could not open Razorpay checkout. Please try again.');
+    }
     return completer.future;
+  }
+
+  /// Poll trusted payment status after app restart mid-checkout.
+  static Future<Map<String, dynamic>> getStatus(String bookingId) async {
+    final res = await FirebaseFunctions.instance
+        .httpsCallable('getPaymentStatus')
+        .call({'bookingId': bookingId});
+    return Map<String, dynamic>.from(res.data as Map);
   }
 }

@@ -7,7 +7,7 @@ Demo mode uses seeded Hyderabad data persisted to `localStorage`. It exercises t
 
 ```bash
 npm install
-npm run dev:worker   # http://localhost:5174  (Worker PWA)
+npm run dev:worker   # http://localhost:5174  (ZYLO Field — worker PWA)
 npm run dev:admin    # http://localhost:5173  (Admin Dashboard)
 npm test             # unit tests: pricing, transitions, assignment scoring
 npm run build        # production builds for both web apps
@@ -17,28 +17,16 @@ npm run build        # production builds for both web apps
 - Admin: any email → dashboard (role switcher in sidebar: Operations / Finance / Super Admin)
 - Worker: select a worker profile on the login screen (e.g. Ramesh K.)
 
-**Customer app (Flutter):**
+**Customer app (Flutter) — Firebase Phone Auth only (no OTP bypass in the app):**
 ```bash
 cd apps/customer-mobile && flutter pub get && flutter run
-# OTP demo: any 10-digit number, OTP = 123456
+# Use Firebase Console → Authentication → Phone → Test phone numbers for QA.
+# Never ship hardcoded OTPs or demo logins in a Play release build.
 ```
 
-## Go live with Firebase
-1. Create `washpro-staging` + `washpro-prod` Firebase projects, enable Phone Auth, Firestore, Storage, Functions (Blaze).
-2. Copy `.env.example` → `apps/*/.env.local` with your web config; apps auto-switch from demo to Firebase mode.
+## Go live with Firebase (`wash-pro-7f3b1`)
+1. Enable Phone Auth, Firestore, Storage, Functions (Blaze), FCM.
+2. Copy `.env.example` → `apps/*/.env.local` with web config; apps auto-switch from demo to Firebase mode.
 3. Set secrets: `firebase functions:secrets:set RAZORPAY_KEY_ID` (etc.)
-4. `firebase deploy --only firestore:rules,firestore:indexes,storage,functions,hosting`
-
-## Structure
-```
-apps/customer-mobile/   Flutter customer app
-apps/worker-pwa/        React+Vite installable PWA
-apps/admin-dashboard/   React+Vite+TS admin
-packages/shared-types/  Domain types, pricing, state machine, assignment scoring, seed data
-packages/validation-schemas/  Zod schemas shared by clients + functions
-packages/design-tokens/ Brand tokens
-functions/              Cloud Functions Gen 2 (TypeScript)
-firestore.rules / storage.rules / firestore.indexes.json
-docs/                   Architecture, data model, security, workflows, deployment
-```
-See `docs/` for details. Currency INR (paise), timezone `Asia/Kolkata`.
+4. `firebase deploy --only firestore:rules,firestore:indexes,storage,functions,hosting:main`
+5. See `docs/PRODUCTION_READINESS_AUDIT.md` and `docs/RELEASE_CHECKLIST.md` before Play upload.

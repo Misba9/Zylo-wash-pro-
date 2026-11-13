@@ -26,11 +26,17 @@ export function subscribeAll(apply: (patch: Record<string, unknown>) => void) {
   const subs: (() => void)[] = [];
   const bind = (name: string, key: string, q?: any) => subs.push(onSnapshot(q ?? collection(db!, name), (s: any) => apply({ [key]: s.docs.map((d: any) => { const row: any = normTimes({ ...strip(d.data()), id: d.id }); // doc id always wins; self-registered workers have no uid field in data
       if (name === "workers") { if (!row.uid) row.uid = d.id; row.serviceAreaIds = row.serviceAreaIds ?? []; row.serviceIds = row.serviceIds ?? row.services ?? []; row.rating = row.rating ?? 0; row.completedJobs = row.completedJobs ?? 0; row.activeJobs = row.activeJobs ?? 0; row.earningsTodayPaise = row.earningsTodayPaise ?? 0; row.distanceKm = row.distanceKm ?? 2; row.photoColor = row.photoColor ?? "#64748b"; row.phone = row.phone ?? ""; } return row; }) }), (e: any) => console.warn(name, e.code)));
-  bind("bookings", "bookings"); bind("workers", "workers"); bind("payments", "payments"); bind("subscriptions", "subscriptions"); bind("supportTickets", "tickets"); bind("services", "services");
+  bind("bookings", "bookings"); bind("workers", "workers"); bind("payments", "payments"); bind("subscriptions", "subscriptions"); bind("supportTickets", "tickets"); bind("services", "services"); bind("addresses", "addresses");
+  bind("addons", "addons"); bind("plans", "plans");
   subs.push(onSnapshot(query(collection(db!, "auditLogs"), orderBy("createdAt", "desc"), limit(50)), (s) => apply({ audit: s.docs.map(d => normTimes({ id: d.id, ...strip(d.data()) })) }), (e) => console.warn("audit", e.code)));
   return () => subs.forEach(u => u());
 }
 export const liveUpdate = (coll: string, id: string, patch: Record<string, unknown>) => { if (!db) return Promise.resolve(); if (!id) { console.warn("liveUpdate skipped: missing document id for", coll); return Promise.resolve(); } return updateDoc(doc(db, coll, id), patch as any); };
+export const liveSet = (coll: string, id: string, data: Record<string, unknown>) => {
+  if (!db) return Promise.resolve();
+  if (!id) { console.warn("liveSet skipped: missing document id for", coll); return Promise.resolve(); }
+  return setDoc(doc(db, coll, id), data as any, { merge: true });
+};
 export const liveAudit = (actor: string, action: string, target: string, reason?: string) => db ? addDoc(collection(db, "auditLogs"), { actor, action, target, reason: reason ?? null, createdAt: new Date().toISOString() }) : Promise.resolve();
 export const liveNotify = (recipientUid: string, title: string, body: string, refId?: string) => db ? addDoc(collection(db, "notifications"), { recipientUid, type: "admin", title, body, refId: refId ?? null, bookingId: refId ?? null, read: false, createdAt: new Date().toISOString() }) : Promise.resolve();
 
@@ -59,9 +65,36 @@ export async function seedPilot(adminUid: string, adminEmail: string) {
   for (const p of SEED_PAYMENTS) batch.set(doc(db, "payments", p.id), { ...p });
   for (const s of SEED_SUBSCRIPTIONS) batch.set(doc(db, "subscriptions", s.id), { ...s });
   for (const t of SEED_TICKETS) batch.set(doc(db, "supportTickets", t.id), { ...t });
-  for (const s of [{ id: "body-wash", name: "Body Wash", tagline: "Foam wash, wheels & exterior finish", durationMinutes: 40, hatchback: 499, sedan: 549, suv: 649, luxury: 799, cashEligible: true, popular: false, active: true }, { id: "interior", name: "Interior Refresh", tagline: "Vacuum, dashboard & surface care", durationMinutes: 60, hatchback: 699, sedan: 749, suv: 849, luxury: 999, cashEligible: true, popular: false, active: true }, { id: "deep-clean", name: "Deep Detail", tagline: "Complete interior & exterior restoration", durationMinutes: 150, hatchback: 1499, sedan: 1649, suv: 1899, luxury: 2299, cashEligible: false, popular: true, active: true }]) batch.set(doc(db, "services", s.id), { ...s });
-  for (const pl of [{ id: "weekly", name: "Weekly Shine", kicker: "Best for personal cars", visits: 4, perWashPaise: 39900, totalPaise: 159600, savePercent: 20, billingMode: "prepaid", active: true }, { id: "alternate", name: "Alternate Days", kicker: "Most loved by commuters", visits: 15, perWashPaise: 23900, totalPaise: 358500, savePercent: 28, billingMode: "prepaid", active: true }, { id: "daily", name: "Daily Essential", kicker: "Always looking showroom-ready", visits: 26, perWashPaise: 18900, totalPaise: 491400, savePercent: 34, billingMode: "recurring", active: true }]) batch.set(doc(db, "plans", pl.id), { ...pl });
+  // Catalog: seat-class prices in paise (+ legacy rupee fields for older clients).
+  const catalogServices = [
+    { id: "body-wash", name: "Body Wash", tagline: "Foam wash, wheels & exterior finish", categoryId: "exterior", pricePaise: { seater5: 54900, seater7: 64900 }, durationMinutes: { seater5: 40, seater7: 50 }, hatchback: 549, sedan: 549, suv: 649, luxury: 649, duration: 40, cashEligible: true, popular: false, featured: false, active: true, sortOrder: 1 },
+    { id: "interior", name: "Interior Cleaning", tagline: "Vacuum, dashboard & surface care", categoryId: "interior", pricePaise: { seater5: 54900, seater7: 64900 }, durationMinutes: { seater5: 50, seater7: 60 }, hatchback: 549, sedan: 549, suv: 649, luxury: 649, duration: 50, cashEligible: true, popular: true, featured: true, active: true, sortOrder: 2 },
+    { id: "deep-clean", name: "Deep Detail", tagline: "Complete interior & exterior restoration", categoryId: "detailing", pricePaise: { seater5: 149900, seater7: 189900 }, durationMinutes: { seater5: 120, seater7: 150 }, hatchback: 1499, sedan: 1499, suv: 1899, luxury: 1899, duration: 120, cashEligible: false, popular: true, featured: true, active: true, sortOrder: 3 },
+  ];
+  for (const s of catalogServices) batch.set(doc(db, "services", s.id), { ...s });
+  for (const c of [
+    { id: "exterior", name: "Exterior Wash", sortOrder: 1, active: true },
+    { id: "interior", name: "Interior Cleaning", sortOrder: 2, active: true },
+    { id: "detailing", name: "Premium Detailing", sortOrder: 3, active: true },
+  ]) batch.set(doc(db, "serviceCategories", c.id), c);
+  for (const a of [
+    { id: "tyre-polish", name: "Tyre polishing", pricePaise: 9900, durationMinutes: 10, applicableServiceIds: ["body-wash", "deep-clean"], applicableSeatClasses: ["seater5", "seater7"], active: true, sortOrder: 1 },
+    { id: "dashboard-polish", name: "Dashboard polishing", pricePaise: 14900, durationMinutes: 15, applicableServiceIds: ["interior", "deep-clean"], applicableSeatClasses: ["seater5", "seater7"], active: true, sortOrder: 2 },
+    { id: "fragrance", name: "Fragrance", pricePaise: 4900, durationMinutes: 5, applicableServiceIds: ["body-wash", "interior", "deep-clean"], applicableSeatClasses: ["seater5", "seater7"], active: true, sortOrder: 3 },
+  ]) batch.set(doc(db, "addons", a.id), a);
+  for (const pl of [
+    { id: "weekly", name: "Weekly Wash", description: "4 washes / month", visits: 4, validityDays: 30, frequency: "Weekly", billingMode: "prepaid", pricePaise: { seater5: 159600, seater7: 199600 }, includedServiceIds: ["body-wash"], active: true, popular: false },
+    { id: "monthly", name: "Premium Monthly", description: "8 washes / month", visits: 8, validityDays: 30, frequency: "Twice weekly", billingMode: "prepaid", pricePaise: { seater5: 269900, seater7: 329900 }, includedServiceIds: ["body-wash", "interior"], active: true, popular: true },
+    { id: "quarterly", name: "Quarterly Package", description: "24 washes / 90 days", visits: 24, validityDays: 90, frequency: "Twice weekly", billingMode: "prepaid", pricePaise: { seater5: 699900, seater7: 849900 }, includedServiceIds: ["body-wash", "interior"], active: true, popular: false },
+  ]) batch.set(doc(db, "plans", pl.id), pl);
+  batch.set(doc(db, "coupons", "WELCOME75"), { code: "WELCOME75", discountType: "fixed", discountValue: 7500, maxRedemptions: 10000, perCustomerLimit: 1, firstBookingOnly: true, active: true });
+  for (const area of [
+    { id: "hitech", name: "Hitech City / Madhapur", pincodes: ["500081", "500033"], cashEligible: true, active: true, expressAvailable: true },
+    { id: "gachibowli", name: "Gachibowli / Financial District", pincodes: ["500032", "500089"], cashEligible: true, active: true, expressAvailable: true },
+    { id: "kondapur", name: "Kondapur", pincodes: ["500084"], cashEligible: true, active: true, expressAvailable: true },
+  ]) batch.set(doc(db, "serviceAreas", area.id), area);
   batch.set(doc(db, "appConfig", "homeBanner"), { pill: "Doorstep Detailing", heading: "Your car deserves a fresh start.", subheading: "Expert care, right where you park.", cta: "Book a wash", imageUrl: "", active: true });
-  batch.set(doc(db, "appConfig", "pilot"), { city: "Hyderabad", timezone: "Asia/Kolkata", currency: "INR", pricingVersion: "hyd-2026.10-v1", workerSharePct: 70 });
+  batch.set(doc(db, "appConfig", "fees"), { serviceFeePaise: 2900, expressFeePaise: 9900, currency: "INR", timezone: "Asia/Kolkata", pricingVersion: "zylo-2026.11-v2" });
+  batch.set(doc(db, "appConfig", "pilot"), { city: "Hyderabad", timezone: "Asia/Kolkata", currency: "INR", pricingVersion: "zylo-2026.11-v2", workerSharePct: 70 });
   await batch.commit();
 }

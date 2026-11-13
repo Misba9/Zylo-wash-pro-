@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Booking, STATUS_LABEL, SERVICES, SERVICE_AREAS, PLANS, inr, recommendWorkers, canTransition } from "../../../packages/shared-types/src/index";
+import { Booking, STATUS_LABEL, SERVICES, SERVICE_AREAS, PLANS, inr, recommendWorkers, canTransition, hasValidCoordinates, mapsDirectionsUrl, osmEmbedUrl, type ServiceLocation } from "../../../packages/shared-types/src/index";
 import { load, save, reset, newAudit, fmtTime } from "./store";
 import { isDemoMode } from "./firebase";
 import { LIVE, watchAuth, login, logout, subscribeAll, liveUpdate, liveAudit, liveNotify, seedPilot, claimAdmin, ensureAdmin, type User } from "./live";
+import { ServicesCatalogPage, PricingCalculatorPage, AddonsPage, PackagesPage } from "./pages/CatalogPages";
 
-type Page = "overview"|"bookings"|"workers"|"services"|"finance"|"subs"|"support"|"audit";
+type Page = "overview"|"analytics"|"bookings"|"customers"|"workers"|"services"|"pricing"|"packages"|"addons"|"coupons"|"areas"|"finance"|"subs"|"reports"|"notifications"|"config"|"admins"|"support"|"audit";
 const CHIP: Record<string,string> = { requested:"#E2E8F0/#475569", awaiting_payment:"#FEF3C7/#B45309", confirmed:"#DBEAFE/#1D4ED8", assigned:"#E0E7FF/#3730A3", en_route:"#FEF3C7/#B45309", arrived:"#E0E7FF/#3730A3", in_progress:"#CCFBF1/#0F766E", pending_verification:"#FCE7F3/#9D174D", completed:"#DCFCE7/#15803D", cancelled:"#FEE2E2/#B91C1C", under_review:"#FDE68A/#92400E" };
 const Chip = ({s}:{s:string})=>{ const [bg,fg]=(CHIP[s]||"#E2E8F0/#475569").split("/"); return <span className="chip" style={{background:bg,color:fg}}>{STATUS_LABEL[s as Booking["status"]]||s}</span>; };
 const csv = (rows: string[][]) => { const blob = new Blob([rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n")], {type:"text/csv"}); const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="washpro-export.csv"; a.click(); };
@@ -56,13 +57,13 @@ export default function App(){
     setAssignId(null); setToast(`Assigned ${workerName} to ${assignBooking.id} · worker + customer notified`);
   };
 
-  if (LIVE && !authReady) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><p className="muted">Connecting to WashPro Firebase (wash-pro-7f3b1)…</p></div>;
-  if (LIVE && !user) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#0B2A4A",padding:18}}><div className="card" style={{maxWidth:380,width:"100%"}}><div style={{fontSize:22,fontWeight:800}}>Wash<span style={{color:"#06B6C9"}}>Pro</span> Admin</div><p className="muted">Live mode · project <b>wash-pro-7f3b1</b></p><form onSubmit={async(e)=>{ e.preventDefault(); setLoginErr(""); try{ await login(email.trim().toLowerCase(),pw); }catch(err:any){ setLoginErr(err.code==="auth/invalid-credential"||err.code==="auth/wrong-password"||err.code==="auth/user-not-found" ? "Wrong email or password. Use admin@washproo.in (note the double “oo”) and the password you set in Firebase Console." : err.code==="auth/configuration-not-found"||err.code==="auth/admin-restricted-operation" ? "Firebase Auth is not enabled yet — Console → Authentication → Get started, enable Email/Password, create this user, then add an admins/{uid} doc (see docs/FIREBASE_LIVE.md)." : err.code==="auth/too-many-requests" ? "Too many failed attempts — wait a few minutes and try again." : (err.message||"Login failed")); } }}><label className="small">Email</label><input className="input" type="email" autoComplete="username" style={{width:"100%",margin:"5px 0 10px"}} value={email} onChange={e=>setEmail(e.target.value)} placeholder="admin@washproo.in"/><label className="small">Password</label><input className="input" type="password" autoComplete="current-password" style={{width:"100%",margin:"5px 0 10px"}} value={pw} onChange={e=>setPw(e.target.value)} placeholder="••••••••"/>{loginErr&&<p style={{color:"#DC2626",fontSize:13}}>{loginErr}</p>}<button className="btn" type="submit" style={{width:"100%",padding:13}}>Sign in</button></form><p className="small muted">First run? After signing in, click “🔑 Activate admin / Seed pilot data” in the sidebar. Disable live mode by clearing apps/admin-dashboard/.env.local.</p></div></div>;
+  if (LIVE && !authReady) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh"}}><p className="muted">Connecting to ZYLO Control (wash-pro-7f3b1)…</p></div>;
+  if (LIVE && !user) return <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"#0B2A4A",padding:18}}><div className="card" style={{maxWidth:380,width:"100%"}}><div style={{fontSize:22,fontWeight:800}}>ZYLO <span style={{color:"#C49A45"}}>Control</span></div><p className="muted">Live mode · project <b>wash-pro-7f3b1</b></p><form onSubmit={async(e)=>{ e.preventDefault(); setLoginErr(""); try{ await login(email.trim().toLowerCase(),pw); }catch(err:any){ setLoginErr(err.code==="auth/invalid-credential"||err.code==="auth/wrong-password"||err.code==="auth/user-not-found" ? "Wrong email or password. Use admin@washproo.in (note the double “oo”) and the password you set in Firebase Console." : err.code==="auth/configuration-not-found"||err.code==="auth/admin-restricted-operation" ? "Firebase Auth is not enabled yet — Console → Authentication → Get started, enable Email/Password, create this user, then add an admins/{uid} doc (see docs/FIREBASE_LIVE.md)." : err.code==="auth/too-many-requests" ? "Too many failed attempts — wait a few minutes and try again." : (err.message||"Login failed")); } }}><label className="small">Email</label><input className="input" type="email" autoComplete="username" style={{width:"100%",margin:"5px 0 10px"}} value={email} onChange={e=>setEmail(e.target.value)} placeholder="admin@washproo.in"/><label className="small">Password</label><input className="input" type="password" autoComplete="current-password" style={{width:"100%",margin:"5px 0 10px"}} value={pw} onChange={e=>setPw(e.target.value)} placeholder="••••••••"/>{loginErr&&<p style={{color:"#DC2626",fontSize:13}}>{loginErr}</p>}<button className="btn" type="submit" style={{width:"100%",padding:13}}>Sign in</button></form><p className="small muted">First run? After signing in, click “🔑 Activate admin / Seed pilot data” in the sidebar. Disable live mode by clearing apps/admin-dashboard/.env.local.</p></div></div>;
 
   return <div className="layout">
     <aside className="side">
-      <div className="logo">Wash<span>Pro</span><div className="hideS" style={{fontSize:11,color:"#8FB0CC",fontWeight:600}}>ADMIN · HYDERABAD</div></div>
-      {([["overview","📊","Overview"],["bookings","🧾","Bookings"],["workers","👷","Workers"],["services","🧽","Services & Pricing"],["finance","💰","Finance"],["subs","🔁","Subscriptions"],["support","🎧","Support"],["audit","🛡️","Audit Logs"]] as [Page,string,string][]).map(([p,ic,l])=> <button key={p} className={page===p?"on":""} onClick={()=>setPage(p)}><span>{ic}</span><span className="lbl">{l}</span>{p==="bookings"&&b.filter(x=>["confirmed","awaiting_payment"].includes(x.status)&&!x.assignedWorkerUid).length>0&&<span className="chip" style={{background:"#F59E0B",color:"#fff",marginLeft:"auto"}}>{b.filter(x=>["confirmed","awaiting_payment"].includes(x.status)&&!x.assignedWorkerUid).length} unassigned</span>}</button>)}
+      <div className="logo">ZYLO <span style={{color:"#C49A45"}}>Control</span><div className="hideS" style={{fontSize:11,color:"#8FB0CC",fontWeight:600}}>ADMIN · HYDERABAD</div></div>
+      {([["overview","📊","Dashboard"],["analytics","📈","Analytics"],["bookings","🧾","Bookings"],["services","🧽","Services"],["pricing","💱","Pricing"],["packages","📦","Packages"],["addons","✨","Add-ons"],["coupons","🏷️","Coupons"],["areas","📍","Service Areas"],["customers","👤","Customers"],["workers","👷","Workers"],["finance","💰","Payments"],["subs","🔁","Subscriptions"],["reports","📄","Reports"],["notifications","🔔","Notifications"],["config","⚙️","App Config"],["admins","🔐","Admin Users"],["support","🎧","Support"],["audit","🛡️","Audit Logs"]] as [Page,string,string][]).map(([p,ic,l])=> <button key={p} data-testid={`nav-${p}`} className={page===p?"on":""} onClick={()=>setPage(p)}><span>{ic}</span><span className="lbl">{l}</span>{p==="bookings"&&b.filter(x=>["confirmed","awaiting_payment"].includes(x.status)&&!x.assignedWorkerUid).length>0&&<span className="chip" style={{background:"#F59E0B",color:"#fff",marginLeft:"auto"}}>{b.filter(x=>["confirmed","awaiting_payment"].includes(x.status)&&!x.assignedWorkerUid).length} unassigned</span>}</button>)}
       <div style={{marginTop:"auto"}} className="hideS">
         <label className="small" style={{color:"#8FB0CC"}}>Acting role (RBAC demo)</label>
         <select className="input" style={{width:"100%",marginTop:6}} value={state.role} onChange={e=>setState(s=>({...s,role:e.target.value}))}><option>Super Admin</option><option>Operations</option><option>Finance</option><option>Support</option></select>
@@ -97,15 +98,23 @@ export default function App(){
         {filtered.length===0&&<tr><td colSpan={7} className="muted" style={{textAlign:"center",padding:24}}>No bookings match.</td></tr>}
         </tbody></table></div></div>}
 
+      {page==="customers" && <CustomersPanel bookings={b} addresses={(state as any).addresses || []} />}
+
       {page==="workers" && <div className="card"><h2 style={{marginTop:0}}>Workers</h2><table><thead><tr><th>Worker</th><th>Areas</th><th>Rating</th><th>Jobs</th><th>Today</th><th>Status</th><th></th></tr></thead><tbody>
         {state.workers.map(w=><tr key={w.uid}><td><span className="avatar" style={{background:w.photoColor,marginRight:8}}>{w.name.split(" ").map(x=>x[0]).join("")}</span><b>{w.name}</b><br/><span className="muted" style={{marginLeft:48}}>{w.phone}</span></td><td>{w.serviceAreaIds.join(", ")}</td><td>★ {w.rating}</td><td>{w.completedJobs} done · {w.activeJobs} active</td><td>{inr(w.earningsTodayPaise)}</td><td><span className="chip" style={{background:w.status==="approved"?"#DCFCE7":"#FEF3C7",color:w.status==="approved"?"#15803D":"#B45309"}}>{w.status}</span> <span className="chip" style={{background:"#E2E8F0",color:"#475569"}}>{w.isAvailable?"on shift":"off"}</span></td><td style={{whiteSpace:"nowrap"}}>{w.status==="pending"&&<button className="btn" onClick={()=>{patchWorker(w.uid,{status:"approved",isAvailable:true}); audit("approveWorker",w.name); setToast(`${w.name} approved ✓`);}}>Approve</button>} {w.status==="approved"&&<button className="btn g" onClick={()=>patchWorker(w.uid,{isAvailable:!w.isAvailable})}>{w.isAvailable?"Set off":"Set on"}</button>} {w.status==="approved"&&<button className="btn d" onClick={()=>{patchWorker(w.uid,{status:"suspended",isAvailable:false}); audit("suspendWorker",w.name);}}>Suspend</button>}</td></tr>)}
       </tbody></table></div>}
 
-      {page==="services" && <><div className="card"><h2 style={{marginTop:0}}>Services & Pricing <span className="muted" style={{fontSize:13}}>(authoritative — bookings snapshot these prices)</span></h2>
-        {state.services.map(s=><div key={s.id} style={{display:"flex",gap:10,alignItems:"center",padding:"12px 0",borderBottom:"1px dashed #E8EFF5",flexWrap:"wrap"}}><b style={{minWidth:150}}>{SERVICES.find(x=>x.id===s.id)?.icon} {s.name}</b><span className="muted">⏱ {s.duration}m</span>{(["hatchback","sedan","suv","luxury"] as const).map(c=><label key={c} className="small">{c} ₹<input className="input" style={{width:80,padding:"6px 8px"}} type="number" value={s[c]} onChange={e=>setState(st=>({...st,services:st.services.map(x=>x.id===s.id?{...x,[c]:Number(e.target.value)}:x)}))}/></label>)}<button className="btn g" onClick={()=>{ if(LIVE) liveUpdate("services",s.id,{...s}).catch(e=>setToast("Save failed: "+e.code)); audit("updatePricing",s.name); setToast("Pricing updated · new bookings use new prices, existing keep snapshot");}}>Save</button><span className="chip" style={{background:s.active?"#DCFCE7":"#FEE2E2",color:s.active?"#15803D":"#B91C1C"}}>{s.active?"Active":"Paused"}</span></div>)}
-        <p className="muted">Areas: {SERVICE_AREAS.map(a=>`${a.name}${a.cashEligible?" (cash ✓)":""}`).join(" · ")}</p></div>
-        <div className="card" style={{marginTop:14}}><b>Subscription plans</b>{PLANS.map(p=><div key={p.id} style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderBottom:"1px dashed #E8EFF5"}}><span><b>{p.name}</b> <span className="muted">· {p.billingMode} · {p.visits} visits / {p.validityDays}d · {p.frequency}</span></span><span>from {inr(p.pricePaise.hatchback)}</span></div>)}</div>
-      </>}
+      {page==="services" && <ServicesCatalogPage services={state.services as any} onServices={(services)=>setState(s=>({...s, services: services as any}))} actorEmail={user?.email||"admin"} toast={setToast} />}
+      {page==="pricing" && <PricingCalculatorPage services={state.services as any} addons={(state as any).addons || []} />}
+      {page==="packages" && <PackagesPage plans={((state as any).plans || []).length ? (state as any).plans : PLANS.map(p=>({ id:p.id, name:p.name, visits:p.visits, validityDays:p.validityDays, frequency:p.frequency, billingMode:p.billingMode, pricePaise:{ seater5:p.pricePaise.sedan, seater7:p.pricePaise.suv }, active:true, popular:!!p.popular }))} onPlans={(plans)=>setState(s=>({...s, plans} as any))} actorEmail={user?.email||"admin"} toast={setToast} />}
+      {page==="addons" && <AddonsPage addons={(state as any).addons || []} onAddons={(addons)=>setState(s=>({...s, addons} as any))} services={state.services as any} actorEmail={user?.email||"admin"} toast={setToast} />}
+      {page==="coupons" && <div className="card"><h2 style={{marginTop:0}}>Coupons</h2><p className="muted">Phase 3 — create/disable coupons with server-side redemption. Seed includes <b>WELCOME75</b> (₹75 fixed).</p><p>Use Pricing calculator to preview WELCOME75 against live service prices.</p></div>}
+      {page==="areas" && <div className="card"><h2 style={{marginTop:0}}>Service areas</h2><p className="muted">Phase 3 CRUD. Seeded Hyderabad areas:</p><ul>{SERVICE_AREAS.map(a=><li key={a.id}><b>{a.name}</b> · {a.pincodes.join(", ")} · {a.cashEligible?"cash ✓":"online only"} · {a.active?"active":"off"}</li>)}</ul></div>}
+      {page==="analytics" && <div className="card"><h2 style={{marginTop:0}}>Analytics</h2><p className="muted">Phase 6 — charts from <code>analyticsDaily</code> aggregates (no dummy series). Dashboard KPIs above use live bookings/payments.</p></div>}
+      {page==="reports" && <div className="card"><h2 style={{marginTop:0}}>Reports</h2><p className="muted">Phase 6 — filtered exports. Bookings & payments CSV already available on those pages.</p></div>}
+      {page==="notifications" && <div className="card"><h2 style={{marginTop:0}}>Notifications</h2><p className="muted">Phase 5 — broadcast via FCM Cloud Functions. Assign flow already writes customer notifications.</p></div>}
+      {page==="config" && <div className="card"><h2 style={{marginTop:0}}>App configuration</h2><p className="muted">Phase 3 — banners, fees (<code>appConfig/fees</code>), policies. Seed writes fees: service ₹29 · express ₹99 · version zylo-2026.11-v2.</p></div>}
+      {page==="admins" && <div className="card"><h2 style={{marginTop:0}}>Admin users & roles</h2><p className="muted">Phase 7 — claim-based RBAC. Today: <code>admins/{"{uid}"}</code> + Firestore rules. Sidebar role switcher is demo-only.</p></div>}
 
       {page==="finance" && <><div className="grid" style={{gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))"}}><div className="card kpi"><span className="muted">Collected</span><b>{inr(revenue)}</b></div><div className="card kpi"><span className="muted">Pending collection (cash)</span><b>{inr(state.payments.filter(p=>p.status==="pending_collection").reduce((n,p)=>n+p.amountPaise,0))}</b></div><div className="card kpi"><span className="muted">Refunds in progress</span><b style={{color:"#DC2626"}}>{inr(refunds)}</b></div><div className="card kpi"><span className="muted">Worker payouts due (70%)</span><b>{inr(Math.round(revenue*0.7))}</b></div></div>
       <div className="card" style={{marginTop:14}}><div style={{display:"flex",justifyContent:"space-between"}}><b>Payments & reconciliation</b><button className="btn g" onClick={()=>csv([["Payment","Booking","Customer","Amount","Method","Status","Ref"],...state.payments.map(p=>[p.id,p.bookingId||"",p.customerName,String(p.amountPaise/100),p.method,String(p.status),p.providerRef||""])])}>⬇ Export CSV</button></div>
@@ -129,8 +138,8 @@ export default function App(){
     {detail && <div className="modalWrap" onClick={()=>setDetailId(null)}><div className="modal" onClick={e=>e.stopPropagation()}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}><h3 style={{margin:0}}>{detail.serviceName} · {detail.id}</h3><Chip s={detail.status}/></div>
       <p className="muted">{detail.customerName} ({detail.customerPhone}) · {detail.vehicleLabel}</p>
-      <p>{detail.addressSnapshot}</p>
       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}><span className="muted">Scheduled</span><span>{fmtTime(detail.scheduledAt)}</span><span className="muted">Worker</span><span>{detail.workerName||"—"}</span><span className="muted">Amount</span><span>{inr(detail.priceSnapshot.totalPaise)} · {detail.paymentMethod} · {detail.paymentStatus}</span><span className="muted">Checklist</span><span>{detail.checklistDone.length} items done</span><span className="muted">Price snapshot</span><span>{detail.priceSnapshot.pricingVersion}</span></div>
+      <BookingServiceLocation booking={detail} onToast={setToast} />
       <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:14}}>
         {(detail.status==="confirmed"||detail.status==="assigned"||detail.status==="awaiting_payment")&&<button className="btn" onClick={()=>{setDetailId(null);setAssignId(detail.id);}}>{detail.workerName?"Reassign":"Assign worker"}</button>}
         {detail.status==="pending_verification"&&<button className="btn" onClick={()=>{patchBooking(detail.id,{status:"completed",completedAt:new Date().toISOString()}); audit("verifyCompletion",detail.id); setDetailId(null); setToast("Completion verified ✓");}}>Verify completion</button>}
@@ -142,4 +151,110 @@ export default function App(){
     </div></div>}
     {toast&&<div className="toast">{toast}</div>}
   </div>;
+}
+
+function bookingServiceLocation(b: Booking): ServiceLocation {
+  const sl = (b as any).serviceLocation as ServiceLocation | undefined;
+  if (sl) return sl;
+  return {
+    addressId: b.addressId,
+    addressLabel: b.addressLabel,
+    formattedAddress: b.addressSnapshot,
+    latitude: null,
+    longitude: null,
+  };
+}
+
+function BookingServiceLocation({ booking, onToast }: { booking: Booking; onToast: (m: string) => void }) {
+  const sl = bookingServiceLocation(booking);
+  const lat = sl.latitude ?? null;
+  const lng = sl.longitude ?? null;
+  const ok = hasValidCoordinates(lat, lng);
+  const address = sl.formattedAddress || booking.addressSnapshot || "—";
+  return (
+    <div style={{ marginTop: 14, padding: 12, borderRadius: 12, background: "#F8FAFC", border: "1px solid #E2E8F0" }}>
+      <b>Service location snapshot</b>
+      <p style={{ margin: "8px 0 4px" }}>{address}</p>
+      {ok ? (
+        <>
+          <p className="muted" style={{ fontFamily: "ui-monospace, monospace", fontSize: 13 }}>
+            Latitude: {(lat as number).toFixed(6)} · Longitude: {(lng as number).toFixed(6)}
+          </p>
+          <iframe
+            title="Service map"
+            style={{ width: "100%", height: 220, border: 0, borderRadius: 10, marginTop: 8 }}
+            src={osmEmbedUrl(lat as number, lng as number)}
+          />
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 10 }}>
+            <a className="btn" style={{ textDecoration: "none" }} href={mapsDirectionsUrl(lat as number, lng as number)} target="_blank" rel="noreferrer">Open in Google Maps</a>
+            <button type="button" className="btn g" onClick={async () => {
+              try { await navigator.clipboard.writeText(`${lat},${lng}`); onToast("Coordinates copied"); }
+              catch { onToast(`${lat}, ${lng}`); }
+            }}>Copy coordinates</button>
+          </div>
+        </>
+      ) : (
+        <p style={{ color: "#B45309", margin: "8px 0 0" }}>Coordinates unavailable for this booking (legacy or unverified address). Do not invent a map pin.</p>
+      )}
+    </div>
+  );
+}
+
+function CustomersPanel({ bookings, addresses }: { bookings: Booking[]; addresses: any[] }) {
+  const customers = useMemo(() => {
+    const map = new Map<string, { uid: string; name: string; phone: string; bookings: number }>();
+    for (const b of bookings) {
+      const uid = (b as any).customerUid || b.customerName;
+      const cur = map.get(uid) || { uid, name: b.customerName, phone: b.customerPhone, bookings: 0 };
+      cur.bookings += 1;
+      map.set(uid, cur);
+    }
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [bookings]);
+
+  return (
+    <div className="card">
+      <h2 style={{ marginTop: 0 }}>Customers & saved addresses</h2>
+      <p className="muted">Phone numbers shown for admin ops only. Addresses come from the shared `addresses` collection (ownerUid-scoped).</p>
+      {customers.map((c) => {
+        const addrs = addresses.filter((a) => a.ownerUid === c.uid);
+        return (
+          <div key={c.uid} style={{ padding: "14px 0", borderBottom: "1px dashed #E8EFF5" }}>
+            <div style={{ display: "flex", gap: 12, flexWrap: "wrap", alignItems: "baseline" }}>
+              <b>{c.name}</b>
+              <span className="muted">{c.phone}</span>
+              <span className="chip" style={{ background: "#E0E7FF", color: "#3730A3" }}>{c.bookings} bookings</span>
+            </div>
+            {addrs.length === 0 && <p className="muted" style={{ margin: "8px 0 0" }}>No saved addresses loaded (demo mode may use booking snapshots only).</p>}
+            {addrs.map((a) => {
+              const ok = hasValidCoordinates(a.latitude, a.longitude);
+              const label = a.label || a.addressLabel || "Address";
+              const formatted = a.formattedAddress || a.line || a.addressLine || a.addressSnapshot || "—";
+              return (
+                <div key={a.id} style={{ marginTop: 10, padding: 12, borderRadius: 12, background: "#F8FAFC", border: a.isDefault ? "1px solid #06B6C9" : "1px solid #E2E8F0" }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <b>{label}</b>
+                    {a.isDefault && <span className="chip" style={{ background: "#CCFBF1", color: "#0F766E" }}>Default</span>}
+                  </div>
+                  <p style={{ margin: "6px 0" }}>{formatted}</p>
+                  {ok ? (
+                    <>
+                      <p className="muted" style={{ fontFamily: "ui-monospace, monospace", fontSize: 12.5 }}>
+                        Lat {(a.latitude as number).toFixed(6)} · Lng {(a.longitude as number).toFixed(6)}
+                      </p>
+                      <iframe title={`map-${a.id}`} style={{ width: "100%", height: 180, border: 0, borderRadius: 10, marginTop: 6 }} src={osmEmbedUrl(a.latitude, a.longitude)} />
+                      <a className="btn g" style={{ textDecoration: "none", marginTop: 8, display: "inline-block" }} href={mapsDirectionsUrl(a.latitude, a.longitude)} target="_blank" rel="noreferrer">Open in Maps</a>
+                    </>
+                  ) : (
+                    <p style={{ color: "#B45309", margin: "6px 0 0" }}>Location not verified — no GPS on this saved address.</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+      {customers.length === 0 && <p className="muted">No customers yet.</p>}
+    </div>
+  );
 }

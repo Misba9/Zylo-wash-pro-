@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="ZYLO Field">
+  <rect width="512" height="512" fill="#123F36"/>
+  <path d="M148 196h72l44 88 44-88h72l-80 148h-72L148 196z" fill="#C49A45"/>
+  <circle cx="356" cy="340" r="34" fill="#65BDA5"/>
+</svg>

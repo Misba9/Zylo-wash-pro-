@@ -3,13 +3,38 @@
   "version": "1.0.0",
   "private": true,
   "description": "WashPro — Doorstep car washing & detailing platform (Hyderabad)",
-  "workspaces": ["apps/worker-pwa", "apps/admin-dashboard", "packages/*"],
+  "workspaces": [
+    "apps/worker-pwa",
+    "apps/admin-dashboard",
+    "apps/website",
+    "packages/*",
+    "tests/e2e"
+  ],
   "scripts": {
-    "dev:worker": "npm run dev -w @washpro/worker-pwa",
+    "dev:worker": "npm run dev -w @zylo/field",
     "dev:admin": "npm run dev -w @washpro/admin-dashboard",
-    "build": "npm run build -w @washpro/shared-types && npm run build -w @washpro/worker-pwa && npm run build -w @washpro/admin-dashboard",
-    "test": "npm run test -w @washpro/shared-types",
-    "build:functions": "npm --prefix functions run build"
+    "dev:website": "npm run dev -w @zylo/website",
+    "build": "npm run build -w @washpro/shared-types && npm run build -w @zylo/field && npm run build -w @washpro/admin-dashboard",
+    "build:unified": "npm run build -w @washpro/shared-types && npm run build -w @zylo/website && ZYLO_BASE=/field/ npm run build -w @zylo/field && ZYLO_BASE=/admin/ npm run build -w @washpro/admin-dashboard && node scripts/assemble-unified-hosting.mjs",
+    "typecheck:unified": "npm run typecheck -w @zylo/website && npm run typecheck -w @zylo/field && npm run typecheck -w @washpro/admin-dashboard",
+    "test": "npm run test -w @washpro/shared-types && npm run test -w @zylo/field",
+    "build:functions": "npm --prefix functions run build",
+    "deploy:main:staging-channel": "npm run build:unified && firebase hosting:channel:deploy unified-preview --only main",
+    "deploy:main": "npm run build:unified && firebase deploy --only hosting:main",
+    "test:e2e": "npm run test:e2e -w @washpro/e2e",
+    "test:e2e:ui": "npm run test:e2e:ui -w @washpro/e2e",
+    "test:e2e:headed": "npm run test:e2e:headed -w @washpro/e2e",
+    "test:e2e:debug": "npm run test:e2e:debug -w @washpro/e2e",
+    "test:e2e:customer": "npm run test:e2e:customer -w @washpro/e2e",
+    "test:e2e:worker": "npm run test:e2e:worker -w @washpro/e2e",
+    "test:e2e:admin": "npm run test:e2e:admin -w @washpro/e2e",
+    "test:e2e:api": "npm run test:e2e:api -w @washpro/e2e",
+    "test:e2e:payments": "npm run test:e2e:payments -w @washpro/e2e",
+    "test:e2e:integration": "npm run test:e2e:integration -w @washpro/e2e",
+    "test:e2e:mobile": "npm run test:e2e:mobile -w @washpro/e2e",
+    "test:e2e:report": "npm run test:e2e:report -w @washpro/e2e"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }

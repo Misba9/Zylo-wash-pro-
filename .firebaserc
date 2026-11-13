@@ -21,6 +21,9 @@
     },
     "wash-pro-7f3b1": {
       "hosting": {
+        "main": [
+          "wash-pro-7f3b1"
+        ],
         "admin": [
           "wash-pro-admin"
         ],

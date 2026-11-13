@@ -7,9 +7,39 @@ export type PaymentStatus = "not_required"|"pending"|"authorized"|"paid"|"failed
 export type PaymentMethod = "online" | "cash";
 export type BookingType = "instant" | "scheduled" | "subscription";
 
-export interface PriceSnapshot { currency:"INR"; subtotalPaise:number; discountPaise:number; taxPaise:number; totalPaise:number; pricingVersion:string }
+export interface PriceSnapshot {
+  currency:"INR";
+  subtotalPaise:number;
+  discountPaise:number;
+  taxPaise:number;
+  totalPaise:number;
+  pricingVersion:string;
+  /** Optional fields written by quoteBookingPrice (Phase 2+). */
+  serviceFeePaise?:number;
+  expressFeePaise?:number;
+  seatClass?: "seater5"|"seater7";
+  couponCode?:string;
+  ruleAdjustmentsPaise?:number;
+}
 export interface Vehicle { id:string; ownerUid:string; nickname:string; category:VehicleCategory; make:string; model:string; color:string; registrationNumber:string; isDefault:boolean }
-export interface Address { id:string; ownerUid:string; label:string; recipientName:string; contactPhone:string; addressLine:string; locality:string; city:string; postalCode:string; apartment?:string; building?:string; flatNumber?:string; parkingSlot?:string; accessInstructions?:string; latitude:number; longitude:number; serviceAreaId:string }
+export interface Address { id:string; ownerUid:string; label:string; recipientName:string; contactPhone:string; addressLine:string; locality:string; city:string; postalCode:string; apartment?:string; building?:string; flatNumber?:string; parkingSlot?:string; accessInstructions?:string; /** Exact pin — omit on legacy records; never invent. */ latitude?:number|null; longitude?:number|null; serviceAreaId:string; state?:string; country?:string; formattedAddress?:string; isDefault?:boolean }
+/** Immutable copy of the customer-selected service point at booking time. */
+export interface ServiceLocation {
+  addressId:string;
+  addressLabel:string;
+  formattedAddress:string;
+  building?:string;
+  street?:string;
+  locality?:string;
+  city?:string;
+  state?:string;
+  postalCode?:string;
+  country?:string;
+  /** Exact map pin — omit/null when legacy address had no GPS. Never invent. */
+  latitude?:number|null;
+  longitude?:number|null;
+  capturedAt?:string;
+}
 export interface Service { id:string; name:string; tagline:string; icon:string; durationMinutes:Record<VehicleCategory,number>; pricePaise:Record<VehicleCategory,number>; inclusions:string[]; exclusions:string[]; checklist:string[]; cashEligible:boolean }
 export interface ServiceArea { id:string; name:string; pincodes:string[]; cashEligible:boolean; active:boolean }
 export interface Worker { uid:string; name:string; phone:string; status:"pending"|"approved"|"suspended"; isAvailable:boolean; serviceAreaIds:string[]; serviceIds:string[]; rating:number; completedJobs:number; distanceKm:number; activeJobs:number; earningsTodayPaise:number; photoColor:string }
@@ -17,11 +47,32 @@ export interface Booking {
   id:string; customerUid:string; customerName:string; customerPhone:string;
   vehicleId:string; vehicleLabel:string; vehicleCategory:VehicleCategory;
   addressId:string; addressLabel:string; addressSnapshot:string; serviceAreaId:string;
+  /** Preferred source for worker/admin navigation — snapshot at booking create. */
+  serviceLocation?:ServiceLocation;
+  serviceLocationCapturedAt?:string;
   serviceId:string; serviceName:string; assignedWorkerUid:string|null; workerName:string|null;
   bookingType:BookingType; status:BookingStatus; scheduledAt:string; estimatedDurationMinutes:number;
   priceSnapshot:PriceSnapshot; paymentMethod:PaymentMethod; paymentStatus:PaymentStatus;
   subscriptionId:string|null; occurrenceId:string|null; checklistDone:string[];
   rating:number|null; createdAt:string; updatedAt:string; completedAt:string|null; cancelReason?:string;
+}
+
+/** True when both coordinates are finite and in range. */
+export function hasValidCoordinates(lat:unknown, lng:unknown): lat is number {
+  return typeof lat === "number" && typeof lng === "number"
+    && Number.isFinite(lat) && Number.isFinite(lng)
+    && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
+}
+
+/** Google Maps directions deep link from exact destination coordinates. */
+export function mapsDirectionsUrl(lat:number, lng:number): string {
+  return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+}
+
+/** OSM embed preview for admin (no API key). */
+export function osmEmbedUrl(lat:number, lng:number, zoom=16): string {
+  const d = 0.01;
+  return `https://www.openstreetmap.org/export/embed.html?bbox=${lng-d}%2C${lat-d}%2C${lng+d}%2C${lat+d}&layer=mapnik&marker=${lat}%2C${lng}`;
 }
 export interface SubscriptionPlan { id:string; name:string; billingMode:"prepaid"|"recurring"; visits:number; validityDays:number; pricePaise:Record<VehicleCategory,number>; frequency:string; popular?:boolean }
 export interface Subscription { id:string; customerUid:string; vehicleId:string; vehicleLabel:string; addressId:string; planId:string; planName:string; billingMode:"prepaid"|"recurring"; status:"pending_payment"|"active"|"paused"|"past_due"|"cancelled"|"expired"; frequency:string; timeWindow:string; visitBalance:number; totalVisits:number; nextVisitAt:string; createdAt:string }
@@ -133,3 +184,5 @@ export function availableSlots(dateISO:string): {time:string; label:string; spot
 export const uid = (p="id")=> `${p}_${Math.random().toString(36).slice(2,9)}`;
 export const nowISO = ()=> new Date().toISOString();
 export function todayAt(time:string){ const d=new Date(); const [h,m]=time.split(":").map(Number); d.setHours(h,m,0,0); return d.toISOString(); }
+
+export * from "./catalog";

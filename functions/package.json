@@ -3,7 +3,12 @@
   "private": true,
   "engines": { "node": "22" },
   "main": "lib/index.js",
-  "scripts": { "build": "tsc", "serve": "npm run build && firebase emulators:start --only functions,firestore", "deploy": "firebase deploy --only functions" },
+  "scripts": {
+    "build": "tsc",
+    "test": "npm run build && node --test lib/payments_crypto.test.js lib/service_location.test.js lib/trusted_amount.test.js",
+    "serve": "npm run build && firebase emulators:start --only functions,firestore",
+    "deploy": "firebase deploy --only functions"
+  },
   "dependencies": { "firebase-admin": "^12.7.0", "firebase-functions": "^6.1.1", "zod": "^3.23.8" },
   "devDependencies": { "typescript": "^5.6.3", "@types/node": "^22.0.0" }
 }
