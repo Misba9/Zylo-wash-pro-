@@ -53,6 +53,7 @@ void main() {
     final instruments =
         (((display['blocks'] as Map)['zylo_pay'] as Map)['instruments'] as List);
     expect(instruments.map((e) => (e as Map)['method']), ['upi', 'card']);
+    expect((instruments.first as Map).containsKey('flows'), isFalse);
     // Direct checkout: no forced method prefill (lets Razorpay show UPI+Cards).
     expect((opts['prefill'] as Map).containsKey('method'), isFalse);
     expect(opts['amount'], 60200);

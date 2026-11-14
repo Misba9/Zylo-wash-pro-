@@ -2702,7 +2702,7 @@ class _FlowState extends State<BookingFlow> {
                                   fontSize: 13.5,
                                   color: context.wpInk)),
                           Text(
-                              'UPI + Cards via Razorpay · Intent/QR need Live Mode',
+                              'UPI + Cards via Razorpay · Test: UPI ID · Live: Intent/QR',
                               style: TextStyle(
                                   color: context.wpMuted, fontSize: 11.5))
                         ])),

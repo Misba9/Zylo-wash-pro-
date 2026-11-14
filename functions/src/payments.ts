@@ -7,6 +7,7 @@ import { db, FieldValue, requireAuth, requireRole, audit, alreadyProcessed, noti
 import { hmacHexEqual, verifyRazorpayCheckoutSignature } from "./payments_crypto.js";
 import { resolveTrustedBookingAmount } from "./trusted_amount.js";
 
+// Bind latest Secret Manager versions (RAZORPAY_KEY_* v4 Test keys) on deploy.
 const RZP_KEY = defineSecret("RAZORPAY_KEY_ID");
 const RZP_SECRET = defineSecret("RAZORPAY_KEY_SECRET");
 const RZP_WEBHOOK = defineSecret("RAZORPAY_WEBHOOK_SECRET");

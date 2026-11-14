@@ -36,8 +36,8 @@ void main() {
     final instruments = (((display['blocks'] as Map)['zylo_pay'] as Map)
         ['instruments'] as List);
     expect(instruments.map((e) => (e as Map)['method']), ['upi', 'card']);
-    expect((instruments.first as Map)['flows'],
-        containsAll(['intent', 'collect', 'qr']));
+    // Forced flows caused Test Mode to drop UPI → Cards-only. Must stay unset.
+    expect((instruments.first as Map).containsKey('flows'), isFalse);
     expect((opts['prefill'] as Map)['method'], 'upi');
     expect((opts['prefill'] as Map)['contact'], '9059899298');
     expect(opts['key'], 'rzp_test_x');
@@ -56,9 +56,11 @@ void main() {
     );
     expect((opts['prefill'] as Map).containsKey('method'), isFalse);
     expect(opts['amount'], 60200);
+    expect(opts['currency'], 'INR');
     final instruments = (((((opts['config'] as Map)['display'] as Map)['blocks']
             as Map)['zylo_pay'] as Map)['instruments'] as List);
     expect(instruments.map((e) => (e as Map)['method']), ['upi', 'card']);
+    expect((instruments.first as Map).containsKey('flows'), isFalse);
   });
 
   test('card preference is prefilled without inventing extra keys', () {

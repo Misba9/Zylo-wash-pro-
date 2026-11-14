@@ -14,3 +14,9 @@ apps/customer-mobile/.dart_tool/
 *.jks
 key.properties
 .tools/
+
+# Razorpay / Functions local secrets (never commit)
+.secret.local
+**/.secret.local
+functions/.env*
+!.env.example

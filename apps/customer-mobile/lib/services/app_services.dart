@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -149,13 +148,17 @@ class RazorpayService {
 
   /// Checkout options for razorpay_flutter Standard Checkout (v1.4.x).
   ///
-  /// UPI diagnosis (do not treat Dashboard "UPI Activated" as Intent/QR):
-  /// - **Test Mode**: UPI Collect only (`success@razorpay` / `failure@razorpay`).
-  /// - **Live Mode**: UPI Intent (needs installed UPI apps + Manifest `<queries>`)
-  ///   and UPI QR where Checkout supports it. Installing apps alone ≠ QR.
-  /// - Do not prefill `method: card` (biases Checkout away from UPI).
-  /// - Explicit `config.display.blocks` keeps UPI+Cards visible; hide other methods.
-  /// - Never invent QR codes or payment links client-side.
+  /// Root cause of Cards-only UPI (fixed): forcing
+  /// `upi.flows: [intent, collect, qr]` with `show_default_blocks: false`
+  /// made Checkout drop the entire UPI instrument in **Test Mode**, where
+  /// Intent/QR are unavailable. Plain `{ method: 'upi' }` lets Razorpay offer
+  /// whichever UPI flows the key/account supports (Collect in Test; Intent/QR
+  /// in Live when activated).
+  ///
+  /// - **Test Mode**: UPI Collect VPA (`success@razorpay` / `failure@razorpay`).
+  /// - **Live Mode**: UPI Intent (needs UPI apps + Manifest `<queries>`) + QR.
+  /// - Do not prefill `method: card` unless the user chose Cards.
+  /// - Never invent QR codes or mark bookings paid client-side.
   static Map<String, dynamic> checkoutOptions({
     required String keyId,
     required String orderId,
@@ -175,12 +178,13 @@ class RazorpayService {
     if (preferredMethod == 'upi' || preferredMethod == 'card') {
       prefill['method'] = preferredMethod;
     }
-    // Request all UPI flows Checkout may offer. Razorpay still gates Intent/QR
-    // to Live Mode; Collect remains the Test Mode path until NPCI sunset.
-    final upiInstrument = <String, dynamic>{
-      'method': 'upi',
-      'flows': <String>['intent', 'collect', 'qr'],
-    };
+    final checkoutMode = keyId.startsWith('rzp_live_')
+        ? 'live'
+        : keyId.startsWith('rzp_test_')
+            ? 'test'
+            : 'unknown';
+    // Plain UPI instrument — do NOT set `flows`. Restricting flows to
+    // intent/collect/qr has caused Test Mode Checkout to hide UPI entirely.
     return {
       'key': keyId,
       'amount': amountPaise,
@@ -195,7 +199,7 @@ class RazorpayService {
             'zylo_pay': {
               'name': 'Pay with UPI or Card',
               'instruments': [
-                upiInstrument,
+                {'method': 'upi'},
                 {'method': 'card'},
               ],
             },
@@ -207,8 +211,6 @@ class RazorpayService {
             {'method': 'wallet'},
             {'method': 'paylater'},
           ],
-          // Only our UPI+Card block — avoids default blocks that drop UPI when
-          // no Intent apps are installed under Test keys.
           'preferences': {'show_default_blocks': false},
         },
       },
@@ -217,10 +219,17 @@ class RazorpayService {
       'send_sms_hash': true,
       'notes': {
         'bookingId': bookingId,
-        'checkoutMode':
-            keyId.startsWith('rzp_live_') ? 'live' : 'test',
+        'checkoutMode': checkoutMode,
       },
     };
+  }
+
+  /// Safe diagnostics — never logs key secret, signature, or full PAN/VPA.
+  static void logCheckoutDiag(String event, Map<String, Object?> fields) {
+    final parts = fields.entries
+        .map((e) => '${e.key}=${e.value}')
+        .join(' ');
+    debugPrint('[Razorpay] $event $parts');
   }
 
   /// Creates order via createPaymentOrder, opens Checkout with server amount,
@@ -266,11 +275,18 @@ class RazorpayService {
     final keyId = (order['keyId'] ?? '').toString();
     final orderId = (order['orderId'] ?? '').toString();
     final amount = ((order['amountPaise'] ?? 0) as num).round();
+    final currency = (order['currency'] ?? 'INR').toString();
+    final reused = order['reused'] == true;
     if (keyId.isEmpty || orderId.isEmpty || amount < 100) {
       throw PaymentUnavailable(
           'Payment gateway keys are not configured yet. Please pay cash or pay later.');
     }
     if (amount != expectedAmountPaise) {
+      logCheckoutDiag('amountMismatch', {
+        'expectedPaise': expectedAmountPaise,
+        'orderPaise': amount,
+        'bookingId': bookingId,
+      });
       throw PaymentUnavailable(
           'Payment amount does not match this booking. Please refresh and try again.');
     }
@@ -279,8 +295,32 @@ class RazorpayService {
         : keyId.startsWith('rzp_test_')
             ? 'test'
             : 'unknown';
-    debugPrint(
-        '[Razorpay] openCheckout mode=$keyMode order=${orderId.length > 8 ? orderId.substring(0, 8) : orderId}… amountPaise=$amount preferred=${preferredMethod ?? 'auto'}');
+    final orderPrefix =
+        orderId.length > 10 ? '${orderId.substring(0, 10)}…' : orderId;
+    final opts = checkoutOptions(
+      keyId: keyId,
+      orderId: orderId,
+      amountPaise: amount,
+      bookingId: bookingId,
+      name: name,
+      email: email,
+      phone: phone,
+      preferredMethod: preferredMethod,
+    );
+    final display = (opts['config'] as Map)['display'] as Map;
+    final instruments = (((display['blocks'] as Map)['zylo_pay'] as Map)
+        ['instruments'] as List);
+    logCheckoutDiag('orderReady', {
+      'mode': keyMode,
+      'keyPrefix': keyId.length > 12 ? '${keyId.substring(0, 12)}…' : keyId,
+      'order': orderPrefix,
+      'amountPaise': amount,
+      'currency': currency,
+      'reused': reused,
+      'preferred': preferredMethod ?? 'auto',
+      'methods': instruments.map((e) => (e as Map)['method']).join('+'),
+      'forcedFlows': instruments.any((e) => (e as Map).containsKey('flows')),
+    });
 
     final completer = Completer<PaymentResult>();
     final rzp = Razorpay();
@@ -304,6 +344,14 @@ class RazorpayService {
     }
 
     rzp.on(Razorpay.EVENT_PAYMENT_SUCCESS, (PaymentSuccessResponse r) async {
+      final payPrefix = (r.paymentId ?? '').length > 10
+          ? '${r.paymentId!.substring(0, 10)}…'
+          : (r.paymentId ?? '');
+      logCheckoutDiag('clientSuccess', {
+        'order': orderPrefix,
+        'payment': payPrefix,
+        'hasSignature': (r.signature ?? '').isNotEmpty,
+      });
       try {
         await functions.httpsCallable('verifyPayment').call({
           'bookingId': bookingId,
@@ -311,17 +359,23 @@ class RazorpayService {
           'razorpayPaymentId': r.paymentId ?? '',
           'razorpaySignature': r.signature ?? '',
         });
+        logCheckoutDiag('verifyOk', {'order': orderPrefix, 'bookingId': bookingId});
         cleanup();
         if (!completer.isCompleted) {
           completer.complete(PaymentResult(r.paymentId ?? '', orderId));
         }
       } on FirebaseFunctionsException catch (e) {
+        logCheckoutDiag('verifyFail', {
+          'order': orderPrefix,
+          'code': e.code,
+        });
         cleanup();
         if (!completer.isCompleted) {
           completer.completeError(PaymentUnavailable(
               'Payment received but verification failed (${e.code}). Our team will reconcile it — do not pay again.'));
         }
       } catch (_) {
+        logCheckoutDiag('verifyPending', {'order': orderPrefix});
         cleanup();
         if (!completer.isCompleted) {
           completer.completeError(PaymentUnavailable(
@@ -330,6 +384,14 @@ class RazorpayService {
       }
     });
     rzp.on(Razorpay.EVENT_PAYMENT_ERROR, (PaymentFailureResponse r) async {
+      logCheckoutDiag('clientError', {
+        'order': orderPrefix,
+        'code': r.code?.toString() ?? '',
+        // message may contain user-facing cancel text; truncate only.
+        'message': (r.message ?? '').length > 80
+            ? '${r.message!.substring(0, 80)}…'
+            : (r.message ?? ''),
+      });
       await reportFailure(r.message, r.code?.toString());
       cleanup();
       if (!completer.isCompleted) {
@@ -337,21 +399,21 @@ class RazorpayService {
             r.message ?? 'Payment was cancelled or failed. You can retry.'));
       }
     });
-    rzp.on(Razorpay.EVENT_EXTERNAL_WALLET, (ExternalWalletResponse r) {});
+    rzp.on(Razorpay.EVENT_EXTERNAL_WALLET, (ExternalWalletResponse r) {
+      logCheckoutDiag('externalWallet', {'wallet': r.walletName ?? ''});
+    });
 
     _checkoutOpen = true;
     try {
-      rzp.open(checkoutOptions(
-        keyId: keyId,
-        orderId: orderId,
-        amountPaise: amount,
-        bookingId: bookingId,
-        name: name,
-        email: email,
-        phone: phone,
-        preferredMethod: preferredMethod,
-      ));
-    } catch (_) {
+      logCheckoutDiag('openCheckout', {
+        'mode': keyMode,
+        'order': orderPrefix,
+        'amountPaise': amount,
+        'currency': 'INR',
+      });
+      rzp.open(opts);
+    } catch (e) {
+      logCheckoutDiag('openFailed', {'error': e.runtimeType.toString()});
       cleanup();
       throw PaymentUnavailable(
           'Could not open Razorpay checkout. Please try again.');

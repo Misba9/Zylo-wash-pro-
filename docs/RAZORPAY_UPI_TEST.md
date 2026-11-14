@@ -1,60 +1,66 @@
-# Zylo — Razorpay UPI in Test Mode
+# Zylo — Razorpay UPI Checkout
 
-## Why UPI was missing (root cause)
+## Root cause (Cards-only on Android)
 
-UPI was **ACTIVATED** on the Razorpay Dashboard, but Checkout still hid UPI because:
+Checkout opened, but **only Cards** appeared. This was **not** fixed by Dashboard “UPI = ACTIVATED” alone.
 
-1. **Android 11+ package visibility** — the app `targetSdk` is 30+. Without `<queries>` for UPI packages / `upi://` intents in `AndroidManifest.xml`, the Razorpay native SDK cannot detect UPI apps and often **omits the entire UPI block**.
-2. **Ineffective method flags** — the Flutter `method: { upi: true, emi: false, … }` map is **not reliably applied** by `razorpay_flutter` Standard Checkout. EMI / Netbanking / Wallet / Pay Later kept appearing for that reason (not because UPI was disabled in code).
+| Factor | Role |
+|--------|------|
+| **Primary (app bug)** | `checkoutOptions` forced `upi.flows: ['intent','collect','qr']` with `show_default_blocks: false`. In **Test Mode**, Intent/QR are unavailable; Checkout then **dropped the entire UPI instrument**, leaving only Cards in the custom block. |
+| Secondary | Android 11+ needs Manifest `<queries>` for UPI Intent apps (already present). Missing queries hide Intent apps; they should not remove Collect/VPA when Collect is offered. |
+| Account / mode | **Test Mode** → UPI Collect (enter VPA). **Live Mode** → UPI Intent + QR. Installing UPI apps does **not** enable QR in Test Mode. |
+| Keys | Server returns `keyId` from Firebase secrets (`RAZORPAY_KEY_ID`). Must be `rzp_test_…` for Test Checkout. Redeploy functions after rotating secrets. |
 
-This was an **Android/SDK checkout configuration** issue, not a Dashboard “UPI off” issue and not a Live-key mix-up (keys remain Test Mode / `rzp_test_…` via Cloud Functions secrets).
+Backend `createPaymentOrder` (amount in paise, `currency: INR`, order id) and `verifyPayment` (HMAC signature) were **not** the cause of missing UPI.
 
-## Fixes applied
+## Fix applied
 
 | Area | Change |
-|---|---|
-| `android/.../AndroidManifest.xml` | Added official Razorpay UPI `<queries>` (GPay, PhonePe, Paytm, BHIM, `upi` scheme, …) |
-| `ios/Runner/Info.plist` | Added `LSApplicationQueriesSchemes` for UPI schemes |
-| `lib/services/app_services.dart` | Use `config.display.hide` for emi/netbanking/wallet/paylater; normalise `prefill.contact` to 10 digits |
+|------|--------|
+| `lib/services/app_services.dart` | UPI instrument is plain `{ method: 'upi' }` — **no** `flows` array. Safe diagnostic logs (mode, order prefix, amount, methods; never secrets/signatures). |
+| `AndroidManifest.xml` | Kept Razorpay UPI `<queries>` (GPay, PhonePe, Paytm, BHIM, `upi://`, …). |
+| `ios/Runner/Info.plist` | Kept `LSApplicationQueriesSchemes` for UPI. |
+| Unit tests | Assert `flows` is **absent** on the UPI instrument. |
 
-Backend `createPaymentOrder` / `verifyPayment` / webhooks were **not** changed. Payments are still only confirmed after server signature verification.
+Payments still confirmed **only** after server `verifyPayment`. Cash-after-service unchanged. Three-step booking unchanged.
 
-## Test Mode — official UPI VPAs
+## What each UPI method needs
 
-In Checkout → **UPI** → enter VPA (Collect flow):
+| Flow | Test Mode (`rzp_test_`) | Live Mode (`rzp_live_`) |
+|------|-------------------------|-------------------------|
+| **UPI Collect / UPI ID** | Yes — enter `success@razorpay` / `failure@razorpay` | Subject to NPCI Collect sunset (28 Feb 2026); migrate to Intent/QR |
+| **UPI Intent** (GPay / PhonePe / …) | Not a real money flow; Razorpay: validate in **Live** | Needs activated UPI + installed apps + `<queries>` |
+| **UPI QR** | Not available for real QR testing in Test | Live Checkout where supported; works without apps |
 
-| VPA | Expected |
-|---|---|
-| `success@razorpay` | Simulated success |
-| `failure@razorpay` | Simulated failure |
+Do **not** claim Intent/QR verified until tested on a physical device with Live keys (or Razorpay’s documented Live UPI checks).
 
-Then confirm:
+## Razorpay Dashboard checklist
 
-1. Flutter success callback → `verifyPayment` Cloud Function succeeds → booking `paid` / `confirmed`
-2. Failure → booking stays `awaiting_payment`; retry allowed
-3. Duplicate pay blocked by existing pending-order reuse + server checks
+1. **Test Mode** toggle ON while developing; API keys must match (`rzp_test_…` in `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET`).
+2. **Payment Methods → UPI → Activated**.
+3. Do not disable UPI Collect in Test until you have verified Live Intent/QR (Collect still needed for Test VPA).
+4. After secret rotation: redeploy payment functions so Checkout receives the new `keyId`.
+   **Done (2026-11-14):** `createPaymentOrder`, `verifyPayment`, `handlePaymentWebhook`, `requestRefund`, `handlePaymentFailure`, `getPaymentStatus` redeployed on `wash-pro-7f3b1` with Test key secret **v4**.
+5. For production UPI Intent/QR: switch to Live keys, complete Razorpay activation/KYC, then retest on device **with and without** UPI apps (QR/Collect should still appear when offered).
 
-### What Test Mode actually covers
-
-| Flow | In Test Mode |
-|---|---|
-| **UPI Collect (enter VPA)** | Supported with `success@razorpay` / `failure@razorpay` |
-| **UPI Intent** (open GPay / PhonePe / …) | Requires a **real device** with those apps + the new `<queries>`. Intent against **real apps** is not a true money movement in Test Mode; Razorpay docs note UPI Intent is best validated in Live Mode. |
-| **UPI QR** | Not claimed verified in this integration pass |
-
-Do **not** claim Google Pay / PhonePe app switching or QR works until physically verified on a device.
-
-## Dashboard checks (still required)
-
-1. Stay in **Test Mode** credentials (`rzp_test_…` in Firebase secrets `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET`).
-2. Confirm **UPI = ACTIVATED** (already done).
-3. After rebuilding the Android app, open Checkout and confirm **UPI** appears beside **Cards**.
-4. Optional: Payment Methods → ensure no account-level block on UPI Collect.
-
-## Rebuild
+## Device QA (manual)
 
 ```bash
 cd apps/customer-mobile
 flutter clean && flutter pub get
-flutter run   # prefer a physical Android device for UPI Intent visibility
+flutter run   # physical Android preferred
+```
+
+1. Book online → open Checkout → confirm **UPI** and **Cards** both visible.
+2. **No UPI apps**: UPI ID / Collect (and QR in Live if shown) still available — not Cards-only.
+3. **With UPI apps** (Live): Intent app list appears.
+4. Test VPA `success@razorpay` → client success → `verifyPayment` → booking paid.
+5. Cancel / fail → booking stays unpaid; retry allowed. No client-only “paid”.
+
+## Logcat filters
+
+```text
+[Razorpay] orderReady
+[Razorpay] openCheckout
+[Razorpay] clientSuccess|clientError|verifyOk|verifyFail
 ```
