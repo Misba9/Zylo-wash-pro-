@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
@@ -148,17 +149,21 @@ class RazorpayService {
 
   /// Checkout options for razorpay_flutter Standard Checkout (v1.4.x).
   ///
-  /// Root cause of Cards-only UPI (fixed): forcing
-  /// `upi.flows: [intent, collect, qr]` with `show_default_blocks: false`
-  /// made Checkout drop the entire UPI instrument in **Test Mode**, where
-  /// Intent/QR are unavailable. Plain `{ method: 'upi' }` lets Razorpay offer
-  /// whichever UPI flows the key/account supports (Collect in Test; Intent/QR
-  /// in Live when activated).
+  /// Cards-only root causes (addressed here):
+  /// 1. Custom `config.display.blocks` + `show_default_blocks: false` drops the
+  ///    whole UPI method when no UPI sub-flow is available for the key/account
+  ///    (common in Test Mode when Collect is restricted and Intent/QR are Live-only).
+  /// 2. Forcing `upi.flows: [intent,collect,qr]` worsened that filter.
   ///
-  /// - **Test Mode**: UPI Collect VPA (`success@razorpay` / `failure@razorpay`).
-  /// - **Live Mode**: UPI Intent (needs UPI apps + Manifest `<queries>`) + QR.
-  /// - Do not prefill `method: card` unless the user chose Cards.
-  /// - Never invent QR codes or mark bookings paid client-side.
+  /// Strategy: keep Razorpay **default** method blocks, only `hide` methods we
+  /// do not want, and put UPI before Cards. Do not invent QR / fake UPI UI.
+  ///
+  /// Availability (Razorpay / NPCI):
+  /// - **Test**: UPI Collect VPA (`success@razorpay` / `failure@razorpay`) when
+  ///   Collect is still enabled on the merchant account.
+  /// - **Live**: UPI Intent (apps + Manifest `<queries>`); QR mainly on wide
+  ///   screens (≥ ~485dp) — not expected on typical phones.
+  /// - Never mark bookings paid client-side.
   static Map<String, dynamic> checkoutOptions({
     required String keyId,
     required String orderId,
@@ -183,8 +188,6 @@ class RazorpayService {
         : keyId.startsWith('rzp_test_')
             ? 'test'
             : 'unknown';
-    // Plain UPI instrument — do NOT set `flows`. Restricting flows to
-    // intent/collect/qr has caused Test Mode Checkout to hide UPI entirely.
     return {
       'key': keyId,
       'amount': amountPaise,
@@ -195,23 +198,17 @@ class RazorpayService {
       'prefill': prefill,
       'config': {
         'display': {
-          'blocks': {
-            'zylo_pay': {
-              'name': 'Pay with UPI or Card',
-              'instruments': [
-                {'method': 'upi'},
-                {'method': 'card'},
-              ],
-            },
-          },
-          'sequence': ['block.zylo_pay'],
+          // No custom blocks — Standard Checkout defaults retain UPI when the
+          // account offers Collect (Test) or Intent (Live).
           'hide': [
             {'method': 'emi'},
             {'method': 'netbanking'},
             {'method': 'wallet'},
             {'method': 'paylater'},
+            {'method': 'cardless_emi'},
           ],
-          'preferences': {'show_default_blocks': false},
+          'sequence': ['upi', 'card'],
+          'preferences': {'show_default_blocks': true},
         },
       },
       'theme': {'color': '#123F36'},
@@ -220,8 +217,17 @@ class RazorpayService {
       'notes': {
         'bookingId': bookingId,
         'checkoutMode': checkoutMode,
+        'configStrategy': 'default_hide',
       },
     };
+  }
+
+  /// Ensure nested maps/lists are plain JSON types for the Android MethodChannel
+  /// → `new JSONObject(map)` bridge (avoids odd nested Map encoding).
+  static Map<String, dynamic> jsonSafeOptions(Map<String, dynamic> options) {
+    return Map<String, dynamic>.from(
+      jsonDecode(jsonEncode(options)) as Map<dynamic, dynamic>,
+    );
   }
 
   /// Safe diagnostics — never logs key secret, signature, or full PAN/VPA.
@@ -281,6 +287,10 @@ class RazorpayService {
       throw PaymentUnavailable(
           'Payment gateway keys are not configured yet. Please pay cash or pay later.');
     }
+    if (!keyId.startsWith('rzp_test_') && !keyId.startsWith('rzp_live_')) {
+      throw PaymentUnavailable(
+          'Payment gateway key is invalid. Please pay cash or pay later.');
+    }
     if (amount != expectedAmountPaise) {
       logCheckoutDiag('amountMismatch', {
         'expectedPaise': expectedAmountPaise,
@@ -297,7 +307,7 @@ class RazorpayService {
             : 'unknown';
     final orderPrefix =
         orderId.length > 10 ? '${orderId.substring(0, 10)}…' : orderId;
-    final opts = checkoutOptions(
+    final opts = jsonSafeOptions(checkoutOptions(
       keyId: keyId,
       orderId: orderId,
       amountPaise: amount,
@@ -306,10 +316,17 @@ class RazorpayService {
       email: email,
       phone: phone,
       preferredMethod: preferredMethod,
-    );
+    ));
     final display = (opts['config'] as Map)['display'] as Map;
-    final instruments = (((display['blocks'] as Map)['zylo_pay'] as Map)
-        ['instruments'] as List);
+    final hideMethods = ((display['hide'] as List?) ?? const [])
+        .map((e) => (e as Map)['method']?.toString() ?? '')
+        .where((m) => m.isNotEmpty)
+        .join('+');
+    final sequence = ((display['sequence'] as List?) ?? const [])
+        .map((e) => e.toString())
+        .join('>');
+    final showDefaults =
+        (display['preferences'] as Map?)?['show_default_blocks'] == true;
     logCheckoutDiag('orderReady', {
       'mode': keyMode,
       'keyPrefix': keyId.length > 12 ? '${keyId.substring(0, 12)}…' : keyId,
@@ -318,8 +335,11 @@ class RazorpayService {
       'currency': currency,
       'reused': reused,
       'preferred': preferredMethod ?? 'auto',
-      'methods': instruments.map((e) => (e as Map)['method']).join('+'),
-      'forcedFlows': instruments.any((e) => (e as Map).containsKey('flows')),
+      'sequence': sequence,
+      'hide': hideMethods,
+      'showDefaultBlocks': showDefaults,
+      'upiHidden': hideMethods.split('+').contains('upi'),
+      'hasCustomBlocks': display.containsKey('blocks'),
     });
 
     final completer = Completer<PaymentResult>();
@@ -384,19 +404,29 @@ class RazorpayService {
       }
     });
     rzp.on(Razorpay.EVENT_PAYMENT_ERROR, (PaymentFailureResponse r) async {
+      final rawMsg = r.message ?? '';
+      final lower = rawMsg.toLowerCase();
+      final looksLikeInvalidTestQr = keyMode == 'test' &&
+          (lower.contains('upi id is invalid') ||
+              lower.contains('could not load banking') ||
+              lower.contains('cannot pay with this qr') ||
+              lower.contains('invalid vpa'));
       logCheckoutDiag('clientError', {
         'order': orderPrefix,
+        'mode': keyMode,
         'code': r.code?.toString() ?? '',
+        'looksLikeInvalidTestQr': looksLikeInvalidTestQr,
         // message may contain user-facing cancel text; truncate only.
-        'message': (r.message ?? '').length > 80
-            ? '${r.message!.substring(0, 80)}…'
-            : (r.message ?? ''),
+        'message': rawMsg.length > 80 ? '${rawMsg.substring(0, 80)}…' : rawMsg,
       });
       await reportFailure(r.message, r.code?.toString());
       cleanup();
       if (!completer.isCompleted) {
-        completer.completeError(PaymentUnavailable(
-            r.message ?? 'Payment was cancelled or failed. You can retry.'));
+        completer.completeError(PaymentUnavailable(looksLikeInvalidTestQr
+            ? 'This is Razorpay Test Mode — QR codes cannot be paid with Google Pay or PhonePe. Use a test card, or UPI ID success@razorpay if Collect is enabled. Real UPI QR needs Live Mode keys.'
+            : (rawMsg.isNotEmpty
+                ? rawMsg
+                : 'Payment was cancelled or failed. You can retry.')));
       }
     });
     rzp.on(Razorpay.EVENT_EXTERNAL_WALLET, (ExternalWalletResponse r) {
@@ -405,13 +435,18 @@ class RazorpayService {
 
     _checkoutOpen = true;
     try {
-      logCheckoutDiag('openCheckout', {
-        'mode': keyMode,
-        'order': orderPrefix,
-        'amountPaise': amount,
-        'currency': 'INR',
-      });
-      rzp.open(opts);
+    logCheckoutDiag('openCheckout', {
+      'mode': keyMode,
+      'order': orderPrefix,
+      'amountPaise': amount,
+      'currency': 'INR',
+      // Test Checkout may still render a QR; real UPI apps cannot pay it.
+      'realUpiQrPayable': keyMode == 'live',
+      'testHint': keyMode == 'test'
+          ? 'use_card_or_success@razorpay_not_gpay_scan'
+          : 'intent_or_live_qr',
+    });
+    rzp.open(opts);
     } catch (e) {
       logCheckoutDiag('openFailed', {'error': e.runtimeType.toString()});
       cleanup();

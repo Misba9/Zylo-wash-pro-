@@ -3,7 +3,7 @@
 ## Accepted for pilot / closed testing
 1. **App Check** not enabled — monitor abuse; enable Play Integrity before broad release.  
 2. **Booking create** still writes Firestore from Flutter; payment amount corrected server-side at order creation. Full CF-only create is follow-up.  
-3. **UPI Intent/QR** unavailable under Razorpay Test keys — Test Collect + Cards only.  
+3. **UPI Intent/QR** unavailable under Razorpay Test keys — Test Collect + Cards only. Scanning a Test Checkout QR in GPay/PhonePe fails with “UPI ID is invalid” / “Could not load banking name” (expected; not an app bug). Live keys required for real QR/Intent.  
 4. **Admin RBAC** sidebar role switcher is demo UX; real enforcement is claims + rules.  
 5. **Analytics charts** placeholders until `analyticsDaily` aggregators ship.  
 6. **Coupon WELCOME75** hardcoded fallback in Functions if Firestore coupon missing — seed coupon on activate.  

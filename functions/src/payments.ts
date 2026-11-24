@@ -1,5 +1,4 @@
 import { onCall, onRequest, HttpsError } from "firebase-functions/v2/https";
-import { defineSecret } from "firebase-functions/params";
 import { z } from "zod";
 import * as crypto from "crypto";
 import type { QueryDocumentSnapshot } from "firebase-admin/firestore";
@@ -7,16 +6,19 @@ import { db, FieldValue, requireAuth, requireRole, audit, alreadyProcessed, noti
 import { hmacHexEqual, verifyRazorpayCheckoutSignature } from "./payments_crypto.js";
 import { resolveTrustedBookingAmount } from "./trusted_amount.js";
 
-// Bind latest Secret Manager versions (RAZORPAY_KEY_* v4 Test keys) on deploy.
-const RZP_KEY = defineSecret("RAZORPAY_KEY_ID");
-const RZP_SECRET = defineSecret("RAZORPAY_KEY_SECRET");
-const RZP_WEBHOOK = defineSecret("RAZORPAY_WEBHOOK_SECRET");
-
+/** Keys come from functions/.env (gitignored) — never hardcode or ship to Flutter. */
 function requireRazorpayKeys() {
   if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) {
     throw new HttpsError(
       "failed-precondition",
-      "Razorpay keys are not configured yet. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET, then redeploy functions.",
+      "Razorpay keys are not configured yet. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET in functions/.env, then redeploy functions.",
+    );
+  }
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  if (!keyId.startsWith("rzp_test_") && !keyId.startsWith("rzp_live_")) {
+    throw new HttpsError(
+      "failed-precondition",
+      "RAZORPAY_KEY_ID must be rzp_test_* (Test) or rzp_live_* (Live).",
     );
   }
 }
@@ -38,7 +40,7 @@ async function razorpay(path: string, method: string, body?: unknown) {
  * Amount is recomputed from Firestore catalog (trusted_amount) — never a
  * client-only priceSnapshot underpayment.
  */
-export const createPaymentOrder = onCall({ secrets: [RZP_KEY, RZP_SECRET] }, async (req) => {
+export const createPaymentOrder = onCall(async (req) => {
   const uid = requireAuth(req);
   const { bookingId } = z.object({ bookingId: z.string().min(1) }).parse(req.data);
   const bSnap = await db.doc(`bookings/${bookingId}`).get();
@@ -147,7 +149,7 @@ export const createPaymentOrder = onCall({ secrets: [RZP_KEY, RZP_SECRET] }, asy
 });
 
 /** Client callback: verify HMAC, ownership, order linkage; never trust Flutter alone. */
-export const verifyPayment = onCall({ secrets: [RZP_KEY, RZP_SECRET] }, async (req) => {
+export const verifyPayment = onCall(async (req) => {
   requireRazorpayKeys();
   const uid = requireAuth(req);
   const d = z
@@ -367,9 +369,7 @@ export const getPaymentStatus = onCall(async (req) => {
  * Razorpay webhook — verifies signature over the raw body, idempotent via webhookEvents.
  * Supported: payment.authorized, payment.captured, payment.failed, refund.processed
  */
-export const handlePaymentWebhook = onRequest(
-  { secrets: [RZP_WEBHOOK, RZP_KEY, RZP_SECRET] },
-  async (req, res) => {
+export const handlePaymentWebhook = onRequest(async (req, res) => {
     if (req.method !== "POST") {
       res.status(405).send("method not allowed");
       return;
@@ -556,7 +556,7 @@ export const recordCashCollection = onCall(async (req) => {
   return { ok: true };
 });
 
-export const requestRefund = onCall({ secrets: [RZP_KEY, RZP_SECRET] }, async (req) => {
+export const requestRefund = onCall(async (req) => {
   const { uid } = requireRole(req, ["finance", "admin", "super_admin"]);
   const d = z
     .object({

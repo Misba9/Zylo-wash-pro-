@@ -8,7 +8,7 @@
 - Customers cannot obtain worker/admin claims via client updates (`users` role keys blocked).
 
 ## Payments
-- Razorpay secrets: Firebase Secret Manager only — **not in Flutter**.
+- Razorpay secrets: root `.env` → synced to `functions/.env` on deploy — **not in Flutter**.
 - Checkout signature verification: `verifyPayment` + webhook HMAC (`payments_crypto`).
 - **Order amount:** recomputed from Firestore catalog in `trusted_amount` before Razorpay `/orders`.
 - Flutter success callback alone does **not** mark paid — requires `verifyPayment`.

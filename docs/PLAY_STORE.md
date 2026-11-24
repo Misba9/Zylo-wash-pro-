@@ -43,7 +43,7 @@ Backend: Firebase project `wash-pro-7f3b1` (Auth + Firestore, rules deployed)
 
 ### 4. Money & scale (when ready)
 - [ ] Upgrade to **Blaze** → `npx -y firebase-tools@latest deploy --only functions --project wash-pro-7f3b1`
-- [ ] Razorpay live keys → `firebase functions:secrets:set RAZORPAY_KEY_ID` (+ SECRET, WEBHOOK_SECRET)
+- [ ] Razorpay live keys → root `.env` (`RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` / webhook) → sync → redeploy functions
 - [ ] Budget alerts (₹500) + App Check enablement
 
 ## Live URLs

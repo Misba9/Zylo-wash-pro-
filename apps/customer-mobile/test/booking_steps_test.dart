@@ -50,10 +50,10 @@ void main() {
     expect(hide, containsAll(['emi', 'netbanking', 'wallet', 'paylater']));
     expect(hide, isNot(contains('upi')));
     expect(hide, isNot(contains('card')));
-    final instruments =
-        (((display['blocks'] as Map)['zylo_pay'] as Map)['instruments'] as List);
-    expect(instruments.map((e) => (e as Map)['method']), ['upi', 'card']);
-    expect((instruments.first as Map).containsKey('flows'), isFalse);
+    // Default blocks — custom blocks previously dropped UPI in Test Mode.
+    expect(display.containsKey('blocks'), isFalse);
+    expect(display['sequence'], ['upi', 'card']);
+    expect((display['preferences'] as Map)['show_default_blocks'], isTrue);
     // Direct checkout: no forced method prefill (lets Razorpay show UPI+Cards).
     expect((opts['prefill'] as Map).containsKey('method'), isFalse);
     expect(opts['amount'], 60200);

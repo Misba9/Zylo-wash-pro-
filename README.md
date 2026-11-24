@@ -27,6 +27,6 @@ cd apps/customer-mobile && flutter pub get && flutter run
 ## Go live with Firebase (`wash-pro-7f3b1`)
 1. Enable Phone Auth, Firestore, Storage, Functions (Blaze), FCM.
 2. Copy `.env.example` → `apps/*/.env.local` with web config; apps auto-switch from demo to Firebase mode.
-3. Set secrets: `firebase functions:secrets:set RAZORPAY_KEY_ID` (etc.)
-4. `firebase deploy --only firestore:rules,firestore:indexes,storage,functions,hosting:main`
+3. Put Razorpay Test keys in root `.env` (`RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET`). Deploy syncs them into `functions/.env` — never put KEY_SECRET in Flutter/Vite.
+4. `firebase deploy --only firestore:rules,firestore:indexes,functions,hosting:main` (enable Storage in Console first if including `storage`)
 5. See `docs/PRODUCTION_READINESS_AUDIT.md` and `docs/RELEASE_CHECKLIST.md` before Play upload.

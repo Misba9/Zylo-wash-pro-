@@ -67,10 +67,9 @@ Functions are built and compile clean, but Firebase requires the **Blaze plan** 
 2. Then run:
 
 ```bash
+# Put RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET in root .env first
+node scripts/sync-razorpay-env.mjs
 firebase deploy --only functions --project washpro-hyd
-firebase functions:secrets:set RAZORPAY_KEY_ID
-firebase functions:secrets:set RAZORPAY_KEY_SECRET
-firebase functions:secrets:set RAZORPAY_WEBHOOK_SECRET
 ```
 
 Until then, the apps talk to Firestore directly under the deployed security rules
@@ -90,7 +89,7 @@ cd apps/customer-mobile && flutter run        # customer app
 
 ## Production checklist (later)
 
-- [ ] Upgrade to Blaze, deploy functions, set Razorpay secrets (above)
+- [ ] Upgrade to Blaze, put Razorpay keys in `.env`, deploy functions (above)
 - [ ] Add Android SHA-1/SHA-256 fingerprints (Project settings → Customer Android) for phone auth on real devices
 - [ ] Create `washpro-prod` project and repeat this guide for production
 - [ ] Enable App Check + set budget alerts

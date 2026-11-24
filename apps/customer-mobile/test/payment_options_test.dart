@@ -31,17 +31,14 @@ void main() {
     expect(hide, containsAll(['emi', 'netbanking', 'wallet', 'paylater']));
     expect(hide, isNot(contains('upi')));
     expect(hide, isNot(contains('card')));
-    expect(display['sequence'], ['block.zylo_pay']);
-    expect((display['preferences'] as Map)['show_default_blocks'], isFalse);
-    final instruments = (((display['blocks'] as Map)['zylo_pay'] as Map)
-        ['instruments'] as List);
-    expect(instruments.map((e) => (e as Map)['method']), ['upi', 'card']);
-    // Forced flows caused Test Mode to drop UPI → Cards-only. Must stay unset.
-    expect((instruments.first as Map).containsKey('flows'), isFalse);
+    expect(display.containsKey('blocks'), isFalse);
+    expect(display['sequence'], ['upi', 'card']);
+    expect((display['preferences'] as Map)['show_default_blocks'], isTrue);
     expect((opts['prefill'] as Map)['method'], 'upi');
     expect((opts['prefill'] as Map)['contact'], '9059899298');
     expect(opts['key'], 'rzp_test_x');
     expect(opts['notes'], containsPair('checkoutMode', 'test'));
+    expect(opts['notes'], containsPair('configStrategy', 'default_hide'));
   });
 
   test('direct checkout without preferredMethod leaves UPI+Cards available', () {
@@ -57,10 +54,13 @@ void main() {
     expect((opts['prefill'] as Map).containsKey('method'), isFalse);
     expect(opts['amount'], 60200);
     expect(opts['currency'], 'INR');
-    final instruments = (((((opts['config'] as Map)['display'] as Map)['blocks']
-            as Map)['zylo_pay'] as Map)['instruments'] as List);
-    expect(instruments.map((e) => (e as Map)['method']), ['upi', 'card']);
-    expect((instruments.first as Map).containsKey('flows'), isFalse);
+    final display = (opts['config'] as Map)['display'] as Map;
+    expect(display.containsKey('blocks'), isFalse);
+    expect(display['sequence'], ['upi', 'card']);
+    final safe = RazorpayService.jsonSafeOptions(opts);
+    expect(safe['order_id'], 'order_direct');
+    expect(((safe['config'] as Map)['display'] as Map)['sequence'],
+        ['upi', 'card']);
   });
 
   test('card preference is prefilled without inventing extra keys', () {

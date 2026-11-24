@@ -27,17 +27,16 @@ and "Pay now (Razorpay)" also appears on awaiting-payment booking details.
 **Your steps when ready:**
 1. Create a Razorpay account, finish KYC, get **Key Id + Key Secret** (test mode first).
 2. Firebase → upgrade project `wash-pro-7f3b1` to **Blaze**.
-3. Set secrets (never put the secret in the app):
+3. Put keys in root `.env` (never in the app). Sync + deploy load `functions/.env`:
    ```bash
-   npx -y firebase-tools@latest functions:secrets:set RAZORPAY_KEY_ID --project wash-pro-7f3b1
-   npx -y firebase-tools@latest functions:secrets:set RAZORPAY_KEY_SECRET --project wash-pro-7f3b1
-   npx -y firebase-tools@latest functions:secrets:set RAZORPAY_WEBHOOK_SECRET --project wash-pro-7f3b1
+   # .env — RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET / optional WEBHOOK_SECRET
+   node scripts/sync-razorpay-env.mjs
+   npx -y firebase-tools@latest deploy --only functions --project wash-pro-7f3b1
    ```
-4. Deploy: `npx -y firebase-tools@latest deploy --only functions --project wash-pro-7f3b1`
-5. In Razorpay Dashboard → Webhooks, add:
+4. In Razorpay Dashboard → Webhooks, add:
    `https://us-central1-wash-pro-7f3b1.cloudfunctions.net/handlePaymentWebhook`
    with the same webhook secret, events: payment.captured, payment.failed, refund.created.
-6. Test with Razorpay test UPI/card, then switch secrets to live keys.
+5. Test with Razorpay test UPI/card, then switch `.env` to live keys and redeploy.
 
 ## 4. Search, filters, sorting ✅ live in code (where needed)
 - Booking flow: service search box + sort (Recommended / Price low→high / high→low).

@@ -58,13 +58,20 @@ Customers:
 
 1. Create / open Razorpay Dashboard → **Test Mode**
 2. Copy **Key ID** and **Key Secret**
-3. Store secrets in Firebase Secret Manager (never in Flutter / git):
+3. Put keys in repo-root `.env` (gitignored — never Flutter / Vite / git):
 
 ```bash
-firebase functions:secrets:set RAZORPAY_KEY_ID --project wash-pro-7f3b1
-firebase functions:secrets:set RAZORPAY_KEY_SECRET --project wash-pro-7f3b1
-firebase functions:secrets:set RAZORPAY_WEBHOOK_SECRET --project wash-pro-7f3b1
+# .env
+RAZORPAY_KEY_ID=rzp_test_xxxxxxxx
+RAZORPAY_KEY_SECRET=xxxxxxxx
+# RAZORPAY_WEBHOOK_SECRET=xxxxxxxx   # optional until webhooks are enabled
 ```
+
+```bash
+node scripts/sync-razorpay-env.mjs   # copies RAZORPAY_* → functions/.env
+```
+
+(Functions predeploy runs the same sync automatically.)
 
 4. Blaze plan is required for outbound HTTPS from Cloud Functions to Razorpay
 
@@ -128,7 +135,7 @@ Verify:
 ## 8. Production migration (later)
 
 1. Create Live Razorpay keys + webhook secret
-2. Set secrets on the `prod` Firebase project (`washpro-prod`)
+2. Put Live keys in root `.env` on the prod machine / CI secret store, sync → `functions/.env`, deploy
 3. Deploy functions/rules to prod
 4. Remove or rotate test phone numbers before public launch if desired
 5. Enable real SMS (Firebase billing) only after SHA keys + Phone provider are verified
@@ -139,4 +146,4 @@ Verify:
 - Real SMS delivery to non-test numbers
 - Live Razorpay capture on a production merchant
 - Webhook delivery from Razorpay’s cloud to a deployed function URL
-- Blaze upgrade / Secret Manager values already present in the project
+- Blaze upgrade / `.env` keys already present for deploy
